@@ -3,12 +3,16 @@ import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 
 // --- ROW LIMIT CONSTANTS ---
-const LIMIT_STAFF_HUB = 10000;
-const LIMIT_EMPLOYEE = 500;
-const LIMIT_CUSTOMERS = 1000;
-const LIMIT_SALES = 15000;
-const LIMIT_PRODUCTION = 2000;
-const LIMIT_AUDIT = 1000;
+// These are safety caps used with Math.min(sheet.rowCount, LIMIT_*).
+// Google Sheets max is 10,000,000 rows but we cap to avoid scanning huge empty sheets.
+// Increase these if any sheet grows beyond the limit.
+const LIMIT_STAFF_HUB  = 50000;  // ~136 years of daily shifts at 1/day
+const LIMIT_EMPLOYEE   = 500;    // Max staff members (unlikely to exceed this)
+const LIMIT_CUSTOMERS  = 5000;   // Max customer records
+const LIMIT_SALES      = 100000; // Max sales rows (~274 sales/day for 1 year)
+const LIMIT_PRODUCTION = 5000;   // Max production log entries
+const LIMIT_AUDIT      = 5000;   // Max inventory audit entries
+const LIMIT_BUDGET     = 500;    // Max expense budget categories
 
 // Define the shape of our data
 export interface POSItem {
@@ -162,10 +166,10 @@ export async function GET(request: Request) {
             if (!staffHubSheet) return NextResponse.json({ error: 'sheet not found' }, { status: 500 });
             await staffHubSheet.loadHeaderRow();
             const realRowCount = staffHubSheet.rowCount;
-            await staffHubSheet.loadCells(`A1:N${Math.min(realRowCount, 2000)}`);
+            await staffHubSheet.loadCells(`A1:N${Math.min(realRowCount, LIMIT_STAFF_HUB)}`);
             
             let lastDataRow = 0;
-            for (let i = Math.min(realRowCount, 2000) - 1; i >= 1; i--) {
+            for (let i = Math.min(realRowCount, LIMIT_STAFF_HUB) - 1; i >= 1; i--) {
                 if (staffHubSheet.getCell(i, 1).value) {
                     lastDataRow = i;
                     break;
@@ -286,7 +290,7 @@ export async function GET(request: Request) {
             const budgetSheet = doc.sheetsByTitle['OpEx_Budget'];
             if (budgetSheet) {
                 try {
-                    const maxBudgetRow = Math.min(budgetSheet.rowCount, 200);
+                    const maxBudgetRow = Math.min(budgetSheet.rowCount, LIMIT_BUDGET);
                     if (maxBudgetRow > 1) {
                         await budgetSheet.loadCells(`A1:B${maxBudgetRow}`);
                         for (let i = 1; i < maxBudgetRow; i++) {
@@ -655,7 +659,7 @@ export async function GET(request: Request) {
             console.log(`[Delivery API] On-shift drivers: ${drivers.join(', ')}`);
 
             // 3. Fetch sales records for deliveries (we scan all sales and filter by order type)
-            await salesSheet.loadCells('A1:T15000'); // Ensure all columns including Unplanned Date/Time (Q,R) are loaded
+            await salesSheet.loadCells(`A1:T${LIMIT_SALES}`); // Ensure all columns including Unplanned Date/Time (Q,R) are loaded
             const salesRows = await salesSheet.getRows();
             const deliveriesMap: Record<string, any> = {};
 
@@ -1187,7 +1191,7 @@ export async function GET(request: Request) {
         }
 
         // Read Customers
-        await customersSheet.loadCells('A1:M50'); // Read up to Column M
+        await customersSheet.loadCells(`A1:M${LIMIT_CUSTOMERS}`);
 
         // Extract Headers from Row 1
         const headers: string[] = [];
@@ -1196,7 +1200,7 @@ export async function GET(request: Request) {
         }
 
         const customers: Customer[] = [];
-        for (let i = 1; i < 50; i++) {
+        for (let i = 1; i < LIMIT_CUSTOMERS; i++) {
             const nameCell = customersSheet.getCell(i, 1); // Column B is the Customer Name
             if (nameCell.value) {
                 const details: Record<string, string> = {};
@@ -1270,8 +1274,8 @@ export async function GET(request: Request) {
         );
         let employees: string[] = [];
         if (employeesSheet) {
-            await employeesSheet.loadCells('A1:A50');
-            for (let i = 1; i < 50; i++) {
+            await employeesSheet.loadCells(`A1:A${LIMIT_EMPLOYEE}`);
+            for (let i = 1; i < LIMIT_EMPLOYEE; i++) {
                 const name = employeesSheet.getCell(i, 0).value;
                 if (name) employees.push(name.toString());
             }
@@ -1815,7 +1819,7 @@ export async function POST(request: Request) {
             const { date, startTime, updates } = body;
             const prodSheet = doc.sheetsByTitle['Production'];
             if (!prodSheet) return NextResponse.json({ error: 'Production sheet not found' }, { status: 500 });
-            await prodSheet.loadCells('A1:Q1000');
+            await prodSheet.loadCells(`A1:Q${LIMIT_PRODUCTION}`);
             const rows = await prodSheet.getRows();
             let updated = false;
             for (let ri = 0; ri < rows.length; ri++) {
@@ -1848,7 +1852,7 @@ export async function POST(request: Request) {
             }
             const salesSheet = doc.sheetsByTitle['Sales'];
             if (!salesSheet) return NextResponse.json({ error: 'Sales sheet not found' }, { status: 500 });
-            await salesSheet.loadCells('A1:P500');
+            await salesSheet.loadCells(`A1:P${LIMIT_SALES}`);
             const rows = await salesSheet.getRows();
             let updated = 0;
             for (let ri = 0; ri < rows.length; ri++) {
@@ -1977,7 +1981,7 @@ export async function POST(request: Request) {
             } else {
                 // Timekeeper expense — update L & M on Staff_&_Commission_Hub row
                 if (!staffHubSheet) return NextResponse.json({ error: 'Staff Hub sheet not found' }, { status: 500 });
-                await staffHubSheet.loadCells('A1:N5000');
+                await staffHubSheet.loadCells(`A1:N${LIMIT_STAFF_HUB}`);
                 if (description !== undefined) staffHubSheet.getCell(rowIndex, 11).value = description;
                 if (amount !== undefined) staffHubSheet.getCell(rowIndex, 12).value = parseFloat(String(amount));
                 if (staffName !== undefined) staffHubSheet.getCell(rowIndex, 1).value = staffName;
@@ -2003,7 +2007,7 @@ export async function POST(request: Request) {
             } else {
                 // Timekeeper expense — only clear L & M, keep the shift data
                 if (!staffHubSheet) return NextResponse.json({ error: 'Staff Hub sheet not found' }, { status: 500 });
-                await staffHubSheet.loadCells('A1:N5000');
+                await staffHubSheet.loadCells(`A1:N${LIMIT_STAFF_HUB}`);
                 staffHubSheet.getCell(rowIndex, 11).value = null;
                 staffHubSheet.getCell(rowIndex, 12).value = null;
                 await staffHubSheet.saveUpdatedCells();
@@ -2018,7 +2022,7 @@ export async function POST(request: Request) {
             const budgetSheet = doc.sheetsByTitle['OpEx_Budget'];
             if (!budgetSheet) return NextResponse.json({ error: 'OpEx_Budget sheet not found' }, { status: 500 });
 
-            const maxBudgetRow = Math.min(budgetSheet.rowCount, 200);
+            const maxBudgetRow = Math.min(budgetSheet.rowCount, LIMIT_BUDGET);
             if (maxBudgetRow > 1) {
                 await budgetSheet.loadCells(`A1:B${maxBudgetRow}`);
             }
