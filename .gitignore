@@ -39,3 +39,34 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# npm cache (local cache, not needed in source control)
+/.npm-cache/
+
+# Google service account JSON key (sensitive — NEVER commit this)
+/JSON Key/
+
+# Bundled Node.js binary folder
+/node-v*-darwin-*/
+
+# Diagnostic and one-off scripts
+diagnose_staff_hub.mjs
+cleanup_staff_hub.mjs
+fix_serial_dates.mjs
+debug_*.mjs
+dump_*.mjs
+check_*.mjs
+verify_*.mjs
+inspect_*.mjs
+sim_*.mjs
+simulate_*.mjs
+test_*.mjs
+test_*.js
+test-*.mjs
+fix_*.mjs
+fix-*.mjs
+headers.mjs
+insert_helper_column.mjs
+
+# Logs
+*.log
