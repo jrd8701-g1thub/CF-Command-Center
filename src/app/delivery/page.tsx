@@ -331,8 +331,8 @@ export default function DeliveryPage() {
             <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
                 {[
                     { label: 'Total Routes', value: total, borderColor: 'border-brand-blue', textColor: 'text-brand-blue', icon: '🚚' },
-                    { label: 'Delivery Completed', value: completed, borderColor: 'border-brand-teal', textColor: 'text-brand-teal', icon: '✅' },
-                    { label: 'Delivery Pending', value: pending, borderColor: 'border-[#FFD93D]', textColor: 'text-[#FFD93D]', icon: '⏳' },
+                    { label: 'Completed', value: completed, borderColor: 'border-brand-teal', textColor: 'text-brand-teal', icon: '✅' },
+                    { label: 'Pending', value: pending, borderColor: 'border-[#FFD93D]', textColor: 'text-[#FFD93D]', icon: '⏳' },
                     { label: 'Missing Order', value: noOrder, borderColor: 'border-brand-orange', textColor: 'text-brand-orange', icon: '⚠️' },
                 ].map((kpi) => (
                     <div key={kpi.label} className={`pbi-card bg-charcoal-800 border ${kpi.borderColor}/30 rounded-2xl p-5 relative overflow-hidden shadow-lg`}>
@@ -472,8 +472,8 @@ export default function DeliveryPage() {
                 <div className="px-5 py-2.5 border-b border-charcoal-700/50 flex items-center gap-2 flex-wrap bg-charcoal-800/80">
                     {([
                         { key: 'ALL', label: 'All', count: filtered.length, colorClass: 'border-brand-blue text-brand-blue bg-brand-blue/10', idleClass: 'border-charcoal-600 text-slate-400 hover:border-slate-500' },
-                        { key: 'Delivery Pending', label: 'Delivery Pending', count: pending, colorClass: 'border-[#FFD93D] text-[#FFD93D] bg-[#FFD93D]/10', idleClass: 'border-charcoal-600 text-slate-400 hover:border-slate-500' },
-                        { key: 'Delivery Completed', label: 'Delivery Completed', count: completed, colorClass: 'border-brand-teal text-brand-teal bg-brand-teal/10', idleClass: 'border-charcoal-600 text-slate-400 hover:border-slate-500' },
+                        { key: 'Delivery Pending', label: 'Pending', count: pending, colorClass: 'border-[#FFD93D] text-[#FFD93D] bg-[#FFD93D]/10', idleClass: 'border-charcoal-600 text-slate-400 hover:border-slate-500' },
+                        { key: 'Delivery Completed', label: 'Completed', count: completed, colorClass: 'border-brand-teal text-brand-teal bg-brand-teal/10', idleClass: 'border-charcoal-600 text-slate-400 hover:border-slate-500' },
                         { key: 'Missing Order', label: 'Missing Order', count: noOrder, colorClass: 'border-brand-orange text-brand-orange bg-brand-orange/10', idleClass: 'border-charcoal-600 text-slate-400 hover:border-slate-500' },
                     ] as { key: typeof statusFilter; label: string; count: number; colorClass: string; idleClass: string }[]).map(tab => (
                         <button
@@ -595,8 +595,8 @@ export default function DeliveryPage() {
                                                 disabled={updating === d.transactionId || noOrderYet}
                                                 className={`text-[10px] font-black px-2 py-1.5 rounded-lg border outline-none w-full cursor-pointer uppercase tracking-wider ${statusClass} transition-colors disabled:opacity-50 disabled:cursor-not-allowed`}
                                             >
-                                                <option value="Delivery Pending">Delivery Pending</option>
-                                                <option value="Delivery Completed">Delivery Completed</option>
+                                                <option value="Delivery Pending">Pending</option>
+                                                <option value="Delivery Completed">Completed</option>
                                             </select>
                                         </td>
                                         {/* Payment */}
@@ -739,8 +739,8 @@ export default function DeliveryPage() {
                                     className="w-full px-3 py-2.5 bg-charcoal-950 border border-charcoal-700 focus:border-brand-blue rounded-xl text-white font-bold text-sm outline-none cursor-pointer transition-colors"
                                     style={{ colorScheme: 'dark' }}
                                 >
-                                    <option value="Delivery Pending">Delivery Pending</option>
-                                    <option value="Delivery Completed">Delivery Completed</option>
+                                    <option value="Delivery Pending">Pending</option>
+                                    <option value="Delivery Completed">Completed</option>
                                 </select>
                             </div>
                             <div>

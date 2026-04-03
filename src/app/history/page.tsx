@@ -80,6 +80,7 @@ function StackedBar({ items }: { items: { label: string; value: number; color: s
 
 export default function SalesHistoryPage() {
     const [sales, setSales] = useState<Sale[]>([]);
+    const [customers, setCustomers] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [selectedMonths, setSelectedMonths] = useState<string[]>([]);
@@ -127,10 +128,15 @@ export default function SalesHistoryPage() {
     useEffect(() => {
         async function fetchSales() {
             try {
-                const res = await fetch('/api/sheet?tab=sales');
-                if (!res.ok) throw new Error('Failed to fetch sales history');
-                const data = await res.json();
-                setSales(data.sales || []);
+                const [salesRes, custRes] = await Promise.all([
+                    fetch('/api/sheet?tab=sales'),
+                    fetch('/api/sheet')
+                ]);
+                if (!salesRes.ok || !custRes.ok) throw new Error('Failed to fetch data');
+                const salesData = await salesRes.json();
+                const custData = await custRes.json();
+                setSales(salesData.sales || []);
+                setCustomers(custData.customers || []);
             } catch (err: unknown) { setError((err as Error).message); }
             finally { setLoading(false); }
         }
@@ -276,67 +282,86 @@ export default function SalesHistoryPage() {
             return h;
         };
 
+        const dayMap: Record<string, number> = { 'sun': 0, 'mon': 1, 'tue': 2, 'wed': 3, 'thu': 4, 'fri': 5, 'sat': 6 };
+
         const buildMap = (filter: 'scheduled' | 'unscheduled' | 'both') => {
             const map = new Map<string, number>();
             let maxVal = 0;
-            filteredSales.forEach(s => {
-                const ot = s.orderType.toLowerCase();
-                if (!ot.includes('delivery')) return;
 
-                const isScheduled = ot.includes('regular') || ot.includes('scheduled');
-                if (filter === 'scheduled' && !isScheduled) return;
-                if (filter === 'unscheduled' && isScheduled) return;
-
-                let date: Date;
-                try { date = new Date(s.timestamp.split(',')[0] || s.timestamp.split(' ')[0]); }
-                catch { return; }
-
-                // --- DAY OF WEEK ---
-                // Priority 1: use Unplanned_Delivery_Date (modern orders)
-                let day = date.getDay();
-                if (s.unplannedDate && s.unplannedDate.match(/\d{4}-\d{2}-\d{2}/)) {
-                    try { day = new Date(s.unplannedDate + 'T12:00:00').getDay(); } catch { }
-                } else {
-                    // Priority 2: date embedded in orderType string
-                    const dayMatch = s.orderType.match(/Delivery:\s*(\d{4}-\d{2}-\d{2})/i);
-                    if (dayMatch) {
-                        try { day = new Date(dayMatch[1] + 'T12:00:00').getDay(); } catch { }
-                    }
-                }
-
-                // --- HOUR ---
-                // Priority 1: use Unplanned_Delivery_Time column (modern orders)
-                let hour = -1;
-                if (s.unplannedTime && s.unplannedTime.trim()) {
-                    hour = parseHourFromTimeStr(s.unplannedTime.trim());
-                }
-                // Priority 2: time embedded in orderType string (legacy)
-                if (hour === -1) {
-                    const timeMatch = s.orderType.match(/@\s*(\d{1,2}):\d{2}\s*([AP]M)/i);
-                    if (timeMatch) {
-                        let h = parseInt(timeMatch[1]);
-                        const ampm = timeMatch[2].toUpperCase();
-                        if (ampm === 'PM' && h < 12) h += 12;
-                        if (ampm === 'AM' && h === 12) h = 0;
-                        hour = h;
-                    }
-                }
-                // Priority 3: fall back to the sale timestamp hour
-                if (hour === -1) {
-                    try { hour = new Date(s.timestamp).getHours(); } catch { hour = 12; }
-                }
-
-                if (hour >= 6 && hour <= 21) {
+            const incrementMap = (day: number, hour: number) => {
+                if (hour >= 6 && hour <= 21 && day >= 0 && day <= 6) {
                     const key = `${day}-${hour}`;
                     const next = (map.get(key) || 0) + 1;
                     map.set(key, next);
                     if (next > maxVal) maxVal = next;
                 }
-            });
+            };
+
+            // 1. Calculate SCHEDULED load from permanent customer database (Baseline)
+            if (filter === 'scheduled' || filter === 'both') {
+                customers.forEach(c => {
+                    const days = String(c.details?.['Delivery Sched'] || c.details?.['deliverysched'] || '').toLowerCase();
+                    const rawTime = String(c.details?.['Delivery Time'] || c.details?.['deliverytime'] || '').toLowerCase();
+                    if (!days || !rawTime) return;
+
+                    const hour = parseHourFromTimeStr(rawTime);
+                    if (hour === -1) return;
+
+                    Object.keys(dayMap).forEach(d => {
+                        if (days.includes(d)) incrementMap(dayMap[d], hour);
+                    });
+                });
+            }
+
+            // 2. Calculate WALK-IN / UNSCHEDULED load from historical Sales transactions
+            if (filter === 'unscheduled' || filter === 'both') {
+                filteredSales.forEach(s => {
+                    const ot = s.orderType.toLowerCase();
+                    if (!ot.includes('delivery')) return;
+
+                    const isScheduled = ot.includes('regular') || ot.includes('scheduled');
+                    // Skip scheduled orders in sales so we don't double count if 'both' is selected
+                    if (isScheduled) return;
+
+                    let date: Date;
+                    try { date = new Date(s.timestamp.split(',')[0] || s.timestamp.split(' ')[0]); }
+                    catch { return; }
+
+                    let day = date.getDay();
+                    if (s.unplannedDate && s.unplannedDate.match(/\d{4}-\d{2}-\d{2}/)) {
+                        try { day = new Date(s.unplannedDate + 'T12:00:00').getDay(); } catch { }
+                    } else {
+                        const dayMatch = s.orderType.match(/Delivery:\s*(\d{4}-\d{2}-\d{2})/i);
+                        if (dayMatch) {
+                            try { day = new Date(dayMatch[1] + 'T12:00:00').getDay(); } catch { }
+                        }
+                    }
+
+                    let hour = -1;
+                    if (s.unplannedTime && s.unplannedTime.trim()) {
+                        hour = parseHourFromTimeStr(s.unplannedTime.trim());
+                    }
+                    if (hour === -1) {
+                        const timeMatch = s.orderType.match(/@\s*(\d{1,2}):\d{2}\s*([AP]M)/i);
+                        if (timeMatch) {
+                            let h = parseInt(timeMatch[1]);
+                            const ampm = timeMatch[2].toUpperCase();
+                            if (ampm === 'PM' && h < 12) h += 12;
+                            if (ampm === 'AM' && h === 12) h = 0;
+                            hour = h;
+                        }
+                    }
+                    if (hour === -1) {
+                        try { hour = new Date(s.timestamp).getHours(); } catch { hour = 12; }
+                    }
+
+                    incrementMap(day, hour);
+                });
+            }
             return { map, maxVal: Math.max(maxVal, 1) };
         };
         return buildMap(heatmapMode);
-    }, [filteredSales, heatmapMode]);
+    }, [filteredSales, customers, heatmapMode]);
 
     const cardClass = "bg-charcoal-800 border border-white/5 rounded-2xl shadow-xl";
     const lblClass = "text-slate-400 text-[10px] font-bold tracking-widest uppercase";

@@ -58,7 +58,7 @@ export default function ExpensesPage() {
   const [categories, setCategories] = useState<string[]>([]);
   const [employees, setEmployees] = useState<{name:string}[]>([]);
   const [loading, setLoading]     = useState(true);
-  const [activeTab, setActiveTab] = useState('All');
+  const [expenseTypeFilter, setExpenseTypeFilter] = useState<'All'|'OPEX'|'COGS'>('All');
 
   // ─ calendar filter ─
   const allWeeks = useMemo(() => getWorkWeeks(), []);
@@ -83,6 +83,7 @@ export default function ExpensesPage() {
   const [newCatName, setNewCatName]   = useState('');
   const [newCatBudget, setNewCatBudget] = useState('');
   const [addingCat, setAddingCat]     = useState(false);
+  const [newCatIsCOGS, setNewCatIsCOGS] = useState(false);
 
   // ─ edit modal ─
   const [editTarget, setEditTarget] = useState<any|null>(null);
@@ -114,32 +115,43 @@ export default function ExpensesPage() {
   useEffect(() => { fetchData(); }, []);
 
   // ─ calendar filters ──────────────────────────────────────────────────────
-  const filteredExpenses = useMemo(() => {
+  const expensesForPeriod = useMemo(() => {
     return expenses.filter(e => {
       const d = parseExpenseDate(e.date);
       if (!d) return false;
       const iso = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
       const m = d.toLocaleString('default', { month: 'long', year: 'numeric' });
-
       const periodFilterActive = selectedMonths.length > 0 || selectedWeeks.length > 0;
       const periodMatch = !periodFilterActive || selectedMonths.includes(m) || selectedWeeks.some(wi => {
           try { return d >= allWeeks[wi].start && d <= allWeeks[wi].end; } catch { return false; }
       });
-      const dateMatch = !selectedDate || iso === selectedDate;
-      return periodMatch && dateMatch;
+      return periodMatch && (!selectedDate || iso === selectedDate);
     });
   }, [expenses, selectedDate, selectedMonths, selectedWeeks, allWeeks]);
 
+  const filteredExpenses = useMemo(() => {
+    return expensesForPeriod.filter(e => {
+      return expenseTypeFilter === 'All' || (expenseTypeFilter === 'COGS' ? e.isCOGS : !e.isCOGS);
+    });
+  }, [expensesForPeriod, expenseTypeFilter]);
+
   // ─ data transforms ───────────────────────────────────────────────────────
-  const totalBudget       = budgets.reduce((s,b)=>s+b.amount, 0);
+  const filteredBudgets = useMemo(() => {
+    return budgets.filter(b => {
+      const isCOGS = b.category === 'COGS';
+      return expenseTypeFilter === 'All' || (expenseTypeFilter === 'COGS' ? isCOGS : !isCOGS);
+    });
+  }, [budgets, expenseTypeFilter]);
+
+  const totalBudget       = filteredBudgets.reduce((s,b)=>s+b.amount, 0);
   const totalActual       = filteredExpenses.reduce((s,e)=>s+e.amount, 0);
   const budgetUtilization = totalBudget > 0 ? (totalActual/totalBudget)*100 : 0;
 
+  const opexTotal = expensesForPeriod.filter(e => !e.isCOGS).reduce((s,e)=>s+e.amount, 0);
+  const cogsTotal = expensesForPeriod.filter(e => e.isCOGS).reduce((s,e)=>s+e.amount, 0);
+
   const expenseMap: Record<string,number> = {};
   filteredExpenses.forEach(e => { expenseMap[e.description||'Other']=(expenseMap[e.description||'Other']||0)+e.amount; });
-  const dynamicPie = Object.entries(expenseMap).map(([name,value],i)=>({name,value,color:COLORS[i%COLORS.length]})).sort((a,b)=>b.value-a.value);
-  const doughnutData = dynamicPie.length > 0 ? dynamicPie : [{name:'No Data',value:1,color:'#1C212E'}];
-  const activeSlice  = activeTab==='All' ? {name:'Total',value:totalActual} : (dynamicPie.find(d=>d.name===activeTab)||{name:activeTab,value:0});
 
   // ─ handlers ──────────────────────────────────────────────────────────────
 
@@ -148,7 +160,7 @@ export default function ExpensesPage() {
     setAddingCat(true);
     try {
       const res = await fetch('/api/sheet', { method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ action:'ADD_CATEGORY', categoryName:newCatName, budgetAmount:parseFloat(newCatBudget||'0') }) });
+        body: JSON.stringify({ action:'ADD_CATEGORY', categoryName:newCatName, budgetAmount:parseFloat(newCatBudget||'0'), isCOGS: newCatIsCOGS }) });
       if (res.ok) {
         setNewCatName(''); setNewCatBudget(''); setShowAddCat(false);
         await fetchData();
@@ -185,7 +197,7 @@ export default function ExpensesPage() {
     try {
       const res = await fetch('/api/sheet', { method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({
-          action:'UPDATE_EXPENSE', rowIndex:editTarget.rowIndex,
+          action:'UPDATE_EXPENSE', rowIndex:editTarget.rowIndex, isCOGS:editTarget.isCOGS,
           description:editVals.description, amount:parseFloat(editVals.amount), staffName:editVals.staffName
         })});
       if (res.ok) { setEditTarget(null); await fetchData(); }
@@ -198,7 +210,7 @@ export default function ExpensesPage() {
     setDeleting(true);
     try {
       const res = await fetch('/api/sheet', { method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ action:'DELETE_EXPENSE', rowIndex:deleteTarget.rowIndex })});
+        body: JSON.stringify({ action:'DELETE_EXPENSE', rowIndex:deleteTarget.rowIndex, isCOGS:deleteTarget.isCOGS })});
       if (res.ok) { setDeleteTarget(null); await fetchData(); }
       else { alert('Failed to delete'); }
     } finally { setDeleting(false); }
@@ -221,11 +233,20 @@ export default function ExpensesPage() {
             <Wallet className="text-brand-teal" size={28} />
             Expenses
           </h1>
-          <p className="text-slate-400 text-sm mt-1">Live expense actuals vs expected OpEx budget · {filterLabel}</p>
+          <p className="text-slate-400 text-sm mt-1">Live expense actuals vs expected budget · {filterLabel}</p>
         </div>
 
         {/* ── Calendar Filter ── */}
-        <div className="flex items-center gap-3 z-50">
+        <div className="flex flex-wrap items-center gap-3 z-50">
+          <div className="bg-charcoal-800 border border-charcoal-700 rounded-lg p-1 flex mr-2">
+            {['All', 'OPEX', 'COGS'].map(t => (
+              <button key={t} onClick={() => setExpenseTypeFilter(t as any)} 
+                className={`px-4 py-1.5 text-xs font-bold rounded-md transition-colors ${expenseTypeFilter === t ? 'bg-charcoal-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>
+                {t}
+              </button>
+            ))}
+          </div>
+
           <div className="w-64">
             <CalendarFilter
               availableDates={availableDates}
@@ -248,40 +269,30 @@ export default function ExpensesPage() {
       {/* ── KPI Grid ── */}
       <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
 
-        {/* Doughnut */}
-        <Card className="md:col-span-4 flex flex-col items-center justify-center">
-          <div className="w-full flex justify-between items-center absolute top-5 px-5 z-10">
-            <span className="text-sm font-bold text-slate-300">Expense Breakdown</span>
+        {/* OPEX vs COGS Breakdown */}
+        <Card className="md:col-span-4 flex flex-col justify-center">
+          <div className="w-full flex justify-between items-center mb-6">
+            <span className="text-sm font-bold text-slate-300">OPEX vs COGS Breakdown</span>
             <MoreHorizontal size={16} className="text-slate-500" />
           </div>
-          <div className="mt-8 relative h-48 w-full flex items-center justify-center">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={doughnutData} cx="50%" cy="50%" innerRadius={60} outerRadius={80}
-                  paddingAngle={dynamicPie.length>0?5:0} dataKey="value" stroke="none" cornerRadius={4}>
-                  {doughnutData.map((e,i)=><Cell key={i} fill={e.color}/>)}
-                </Pie>
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="absolute flex flex-col items-center">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">{activeSlice.name}</span>
-              <span className="text-2xl font-bold text-white">₱{activeSlice.value.toLocaleString(undefined,{maximumFractionDigits:0})}</span>
+          <div className="flex flex-col gap-6 w-full mt-2">
+            <div className="p-4 bg-charcoal-900 border border-charcoal-700 rounded-xl relative overflow-hidden">
+              <div className="absolute right-0 top-0 w-16 h-full bg-brand-teal/10 skew-x-12 translate-x-4"></div>
+              <p className="text-[10px] uppercase font-bold text-slate-500 tracking-wider mb-1 relative z-10">Operating Expenses (OPEX)</p>
+              <p className="text-3xl font-black text-white relative z-10">₱{opexTotal.toLocaleString(undefined,{maximumFractionDigits:0})}</p>
             </div>
-          </div>
-          <div className="flex gap-2 mt-4 bg-charcoal-900 p-1 rounded-lg border border-charcoal-700 w-full max-w-[280px] overflow-x-auto">
-            {[{name:'All'},...dynamicPie.slice(0,3)].map(item=>(
-              <button key={item.name} onClick={()=>setActiveTab(item.name)}
-                className={`flex-1 text-[10px] font-bold py-1.5 px-3 whitespace-nowrap rounded transition-colors ${activeTab===item.name?'bg-charcoal-700 text-white':'text-slate-400 hover:text-slate-200'}`}>
-                {item.name}
-              </button>
-            ))}
+            <div className="p-4 bg-charcoal-900 border border-charcoal-700 rounded-xl relative overflow-hidden">
+              <div className="absolute right-0 top-0 w-16 h-full bg-purple-400/10 skew-x-12 translate-x-4"></div>
+              <p className="text-[10px] uppercase font-bold text-slate-500 tracking-wider mb-1 relative z-10">Cost of Goods Sold (COGS)</p>
+              <p className="text-3xl font-black text-white relative z-10">₱{cogsTotal.toLocaleString(undefined,{maximumFractionDigits:0})}</p>
+            </div>
           </div>
         </Card>
 
         {/* Radial Budget vs Actual */}
         <Card className="md:col-span-4 flex flex-col justify-between">
           <div className="w-full flex justify-between items-center mb-2">
-            <span className="text-sm font-bold text-slate-300">Expected vs Actual OpEx</span>
+            <span className="text-sm font-bold text-slate-300">Expected vs Actual</span>
             <div className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full border ${budgetUtilization>100?'text-brand-orange bg-brand-orange/10 border-brand-orange/20':'text-brand-teal bg-brand-teal/10 border-brand-teal/20'}`}>
               {budgetUtilization>100?<TrendingUp size={12}/>:<TrendingDown size={12}/>}
               <span className="font-bold">₱{Math.abs(totalBudget-totalActual).toLocaleString()}</span>
@@ -430,9 +441,9 @@ export default function ExpensesPage() {
                       <td className="p-4 whitespace-nowrap text-slate-400 text-xs">{exp.date}</td>
                       <td className="p-4 font-semibold text-slate-200">{exp.staffName}</td>
                       <td className="p-4">{exp.description}</td>
-                      <td className="p-4">
-                        <span className={`text-[10px] font-bold px-2 py-1 rounded-full border ${exp.source==='Timekeeper'?'text-brand-blue bg-brand-blue/10 border-brand-blue/20':'text-brand-teal bg-brand-teal/10 border-brand-teal/20'}`}>
-                          {exp.source}
+                      <td className="p-4 flex gap-1">
+                        <span className={`text-[10px] font-bold px-2 py-1 rounded-full border ${exp.isCOGS?'text-purple-400 bg-purple-400/10 border-purple-400/20':'text-brand-teal bg-brand-teal/10 border-brand-teal/20'}`}>
+                          {exp.isCOGS ? 'COGS' : 'OPEX'}
                         </span>
                       </td>
                       <td className="p-4 text-right font-black text-brand-orange">
@@ -504,6 +515,10 @@ export default function ExpensesPage() {
                     <input type="number" step="0.01" min="0" placeholder="Monthly budget (₱)" value={newCatBudget}
                       onChange={e=>setNewCatBudget(e.target.value)}
                       className="w-full bg-charcoal-800 border border-charcoal-700 text-white rounded-lg p-2.5 text-sm outline-none focus:border-brand-teal font-mono"/>
+                    <label className="flex items-center gap-2 text-sm text-slate-300">
+                      <input type="checkbox" checked={newCatIsCOGS} onChange={e=>setNewCatIsCOGS(e.target.checked)} className="rounded border-charcoal-700 text-brand-teal bg-charcoal-900"/>
+                      This is a COGS cost (Cost of Goods Sold)
+                    </label>
                     <button type="button" onClick={handleAddCategory} disabled={addingCat||!newCatName}
                       className="w-full py-2 bg-brand-teal/20 hover:bg-brand-teal/30 text-brand-teal font-bold rounded-lg text-sm transition-colors disabled:opacity-50">
                       {addingCat?'Saving...':'Save to OpEx_Budget'}

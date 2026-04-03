@@ -198,115 +198,45 @@ export async function GET(request: Request) {
             return NextResponse.json({ realRowCount, lastDataRow, rows });
         }
 
-        // ---- EXPENSES TAB (read budgets + actuals from both sources) ----
+        // ---- EXPENSES TAB (Unified dynamic fetch from side-by-side tables) ----
         if (tab === 'expenses') {
-            const expenses: { rowIndex: number; date: string; staffName: string; description: string; amount: number; source: string }[] = [];
-
-            // ── 1. Timekeeper expenses: use loadCells for direct cell-index access ──
-            //    LOG_EXPENSE writes via getCell(r, 11) and getCell(r, 12).
-            //    We read the same way — no header-name guessing.
-            const staffHubSheet = doc.sheetsByTitle['Staff_&_Commission_Hub'];
-
-            // Helper: convert Excel serial date number → 'M/D/YYYY' string
-            const excelSerialToDate = (v: unknown): string => {
-                if (!v) return '';
-                const s = v.toString().trim();
-                // If it already looks like a date string, return as-is
-                if (/[\/\-]/.test(s)) return s;
-                // Try parsing as Excel serial (days since 1900-01-00)
-                const serial = parseFloat(s);
-                if (!isNaN(serial) && serial > 40000 && serial < 60000) {
-                    const d = new Date(Date.UTC(1899, 11, 30) + serial * 86400000);
-                    return `${d.getUTCMonth()+1}/${d.getUTCDate()}/${d.getUTCFullYear()}`;
-                }
-                return s;
-            };
-
-            if (staffHubSheet) {
-                 try {
-                     await staffHubSheet.loadCells(`A1:N${LIMIT_STAFF_HUB}`);
-                     const totalRows = staffHubSheet.rowCount;
-                    console.log(`[GET expenses] Staff_Hub: ${totalRows} rows, scanning for expense entries in cols L(11) & M(12)…`);
-                    // Row 0 = headers; start from row 1
-                    for (let r = 1; r < totalRows; r++) {
-                        const rawAmt = staffHubSheet.getCell(r, 12).value; // M: Expense_Amount
-                        if (rawAmt === null || rawAmt === undefined || rawAmt === '') continue;
-                        const amtVal = typeof rawAmt === 'number'
-                            ? rawAmt
-                            : parseFloat(String(rawAmt).replace(/[^0-9.-]+/g, '') || '0');
-                        if (isNaN(amtVal) || amtVal === 0) continue;
-                        // Skip obviously corrupted/test entries (>₱10M is not a real expense)
-                        if (amtVal > 10_000_000) { console.log(`[GET expenses]  SKIP row ${r}: suspiciously large amount ${amtVal}`); continue; }
-
-                        const rawDate  = staffHubSheet.getCell(r, 0).value;  // A: Date
-                        const rawName  = staffHubSheet.getCell(r, 1).value;  // B: Staff_Name
-                        const rawDesc  = staffHubSheet.getCell(r, 11).value; // L: Expense_Description
-
-                        expenses.push({
-                            rowIndex: r - 1,  // 0-based offset (matches old getRows index)
-                            date:        excelSerialToDate(rawDate),
-                            staffName:   rawName?.toString() || 'Unknown',
-                            description: rawDesc?.toString() || 'Other',
-                            amount:      amtVal,
-                            source:      'Timekeeper',
-                        });
-                        console.log(`[GET expenses]  Timekeeper row ${r}: name=${rawName} desc=${rawDesc} amt=${amtVal}`);
-                    }
-                } catch (e) { console.error('[GET expenses] Error scanning Staff_Hub:', e); }
-            }
-
-
-            // ── 2. Dashboard expenses: dedicated Expenses sheet ──
-            const expSheet = doc.sheetsByTitle['Expenses'];
-            if (expSheet) {
-                try {
-                    const expRows = await expSheet.getRows();
-                    console.log(`[GET expenses] Expenses sheet: ${expRows.length} rows`);
-                    for (let i = 0; i < expRows.length; i++) {
-                        const row = expRows[i];
-                        const rawAmt = row.get('Amount');
-                        if (!rawAmt && rawAmt !== 0) continue;
-                        const amtVal = parseFloat(rawAmt.toString().replace(/[^0-9.-]+/g, '') || '0');
-                        if (isNaN(amtVal) || amtVal === 0) continue;
-                        const entry = {
-                            rowIndex: i,
-                            date:        row.get('Date')?.toString() || '',
-                            staffName:   row.get('Staff_Name')?.toString() || 'Unknown',
-                            description: row.get('Category')?.toString() || 'Other',
-                            amount:      amtVal,
-                            source:      'Dashboard',
-                        };
-                        expenses.push(entry);
-                        console.log(`[GET expenses]  Dashboard row ${i}: name=${entry.staffName} desc=${entry.description} amt=${amtVal}`);
-                    }
-                } catch (e) { console.error('[GET expenses] Error reading Expenses sheet:', e); }
-            } else {
-                console.log('[GET expenses] No "Expenses" sheet found — Dashboard entries will appear after first log.');
-            }
-
-            // ── 3. OpEx budgets & categories ──
-            let budgets: { description: string; amount: number }[] = [];
+            const expenses: any[] = [];
+            let budgets: any[] = [];
             let categories: string[] = [];
-            const budgetSheet = doc.sheetsByTitle['OpEx_Budget'];
-            if (budgetSheet) {
-                try {
-                    const maxBudgetRow = Math.min(budgetSheet.rowCount, LIMIT_BUDGET);
-                    if (maxBudgetRow > 1) {
-                        await budgetSheet.loadCells(`A1:B${maxBudgetRow}`);
-                        for (let i = 1; i < maxBudgetRow; i++) {
-                            const desc = budgetSheet.getCell(i, 0).value;
-                            const amt  = budgetSheet.getCell(i, 1).value;
-                            if (desc && amt !== null && amt !== '') {
-                                const amtNum = typeof amt === 'number' ? amt : parseFloat(amt.toString().replace(/[^0-9.-]+/g, '') || '0');
-                                budgets.push({ description: desc.toString(), amount: amtNum });
-                                if (!categories.includes(desc.toString())) categories.push(desc.toString());
-                            }
-                        }
-                    }
-                } catch (e) { console.error('Error loading OpEx_Budget', e); }
+
+            const expSheet = doc.sheetsByTitle['Expenses'];
+            if (!expSheet) return NextResponse.json({ error: 'Expenses sheet not found' }, { status: 500 });
+            
+            const maxRows = Math.max(expSheet.rowCount, 50);
+            await expSheet.loadCells(`A1:M${maxRows}`);
+
+            for (let i = 1; i < maxRows; i++) {
+                const desc = expSheet.getCell(i, 0).value;
+                if (!desc) continue;
+                const type = expSheet.getCell(i, 1).value || 'OPEX';
+                const amtRaw = expSheet.getCell(i, 2).value;
+                const amtNum = typeof amtRaw === 'number' ? amtRaw : parseFloat(amtRaw?.toString().replace(/[^0-9.-]+/g, '') || '0');
+                budgets.push({ description: desc.toString(), category: type.toString(), amount: amtNum });
+                if (!categories.includes(desc.toString())) categories.push(desc.toString());
             }
 
-            console.log(`[GET expenses] Returning ${expenses.length} total (${expenses.filter(e=>e.source==='Timekeeper').length} Timekeeper, ${expenses.filter(e=>e.source==='Dashboard').length} Dashboard), ${budgets.length} budgets`);
+            for (let i = 1; i < maxRows; i++) {
+                const date = expSheet.getCell(i, 4).value;
+                const amtRaw = expSheet.getCell(i, 7).value;
+                if (!date && (!amtRaw && amtRaw !== 0)) continue;
+                const amtNum = typeof amtRaw === 'number' ? amtRaw : parseFloat(amtRaw?.toString().replace(/[^0-9.-]+/g, '') || '0');
+                expenses.push({ rowIndex: i, date: date?.toString() || '', staffName: expSheet.getCell(i, 5).value?.toString() || '', description: expSheet.getCell(i, 6).value?.toString() || '', amount: amtNum, source: 'Dashboard', isCOGS: false });
+            }
+
+            for (let i = 1; i < maxRows; i++) {
+                const date = expSheet.getCell(i, 9).value;
+                const amtRaw = expSheet.getCell(i, 12).value;
+                if (!date && (!amtRaw && amtRaw !== 0)) continue;
+                const amtNum = typeof amtRaw === 'number' ? amtRaw : parseFloat(amtRaw?.toString().replace(/[^0-9.-]+/g, '') || '0');
+                expenses.push({ rowIndex: i, date: date?.toString() || '', staffName: expSheet.getCell(i, 10).value?.toString() || '', description: expSheet.getCell(i, 11).value?.toString() || '', amount: amtNum, source: 'Dashboard', isCOGS: true });
+            }
+
+            console.log(`[GET expenses] Returning ${expenses.length} total expenses, ${budgets.length} budgets/categories`);
             return NextResponse.json({ expenses, budgets, categories });
         }
 
@@ -998,6 +928,9 @@ export async function GET(request: Request) {
                 const rawDate = staffHubSheet2.getCell(i, 0).value; // A
                 const jsDate = typeof rawDate === 'number' ? new Date(Math.round((rawDate - 25569) * 86400 * 1000)) : new Date(rawDate?.toString() || '');
 
+                // Ensure date is valid; skip row if we cannot parse the login date
+                if (isNaN(jsDate.getTime())) continue;
+
                 // Filter by period if provided
                 if (start && jsDate < start) continue;
                 if (end && jsDate > end) continue;
@@ -1051,6 +984,7 @@ export async function GET(request: Request) {
                 const timestamp = (row.get('Timestamp') || '').toString().trim();
                 if (!timestamp) continue;
                 const jsDate = new Date(timestamp.split(',')[0]);
+                if (isNaN(jsDate.getTime())) continue;
 
                 // Filter sales by same period as shifts
                 if (start && jsDate < start) continue;
@@ -1482,11 +1416,12 @@ export async function POST(request: Request) {
                 return NextResponse.json({ error: 'Staff Hub list is full. Please contact administrator.' }, { status: 500 });
             }
 
-            // Write cells using stringValue to prevent Google Sheets from auto-converting time to serial numbers
-            staffHubSheet.getCell(targetRow, 0).stringValue = date;       // A: Clock_In_Date
+            // Prepended apostrophe forces Google Sheets to treat the cell as literal text 
+            // instead of auto-converting times to serial numbers
+            staffHubSheet.getCell(targetRow, 0).value = `'${date}`;       // A: Clock_In_Date
             staffHubSheet.getCell(targetRow, 1).value = staffName;        // B: Staff_Name
             staffHubSheet.getCell(targetRow, 2).value = role || '';       // C: Role
-            staffHubSheet.getCell(targetRow, 3).stringValue = time;       // D: Clock_In_Time (stored as text)
+            staffHubSheet.getCell(targetRow, 3).value = `'${time}`;       // D: Clock_In_Time (stored as text)
             staffHubSheet.getCell(targetRow, 9).value = basePay || 0;    // J: Base_Pay
 
             await staffHubSheet.saveUpdatedCells();
@@ -1558,9 +1493,9 @@ export async function POST(request: Request) {
                 return NextResponse.json({ error: 'No active session found to check out.' }, { status: 400 });
             }
 
-            // Use stringValue to prevent Google Sheets auto-converting time strings to serials
-            staffHubSheet.getCell(targetRowIndex, 4).stringValue = clockOutTime;  // E: Clock_Out_Time
-            staffHubSheet.getCell(targetRowIndex, 5).stringValue = clockOutDate;  // F: Clock_Out_Date
+            // Prepended apostrophe to prevent serial number auto-conversion
+            staffHubSheet.getCell(targetRowIndex, 4).value = `'${clockOutTime}`;  // E: Clock_Out_Time
+            staffHubSheet.getCell(targetRowIndex, 5).value = `'${clockOutDate}`;  // F: Clock_Out_Date
 
             // Calculate hours server-side (avoids formula breaking on text values in A/D/E/F)
             const clockInTimeStr = staffHubSheet.getCell(targetRowIndex, 3).value?.toString() || '';
@@ -1636,12 +1571,12 @@ export async function POST(request: Request) {
             if (overrideLoginDate || overrideLoginTime) {
                 if (overrideLoginDate) {
                     const newDate = overrideLoginDate; // Standardized to YYYY-MM-DD
-                    staffHubSheet.getCell(targetRowIndex, 0).stringValue = newDate;  // A: Date (text)
+                    staffHubSheet.getCell(targetRowIndex, 0).value = `'${newDate}`;  // A: Date (text)
                     auditParts.push(`Login date overridden to ${newDate}`);
                 }
                 if (overrideLoginTime) {
                     const newTime = formatTime12hr(overrideLoginTime);
-                    staffHubSheet.getCell(targetRowIndex, 3).stringValue = newTime;  // D: Clock_In (text)
+                    staffHubSheet.getCell(targetRowIndex, 3).value = `'${newTime}`;  // D: Clock_In (text)
                     auditParts.push(`Login time overridden to ${newTime}`);
                 }
             }
@@ -1653,12 +1588,12 @@ export async function POST(request: Request) {
 
                 if (overrideLogoutTime) {
                     const newTime = formatTime12hr(overrideLogoutTime);
-                    staffHubSheet.getCell(targetRowIndex, 4).stringValue = newTime;  // E: Clock_Out (text)
+                    staffHubSheet.getCell(targetRowIndex, 4).value = `'${newTime}`;  // E: Clock_Out (text)
                     auditParts.push(`Logout time overridden to ${newTime}`);
                 }
                 if (overrideLogoutDate) {
                     const newDate = overrideLogoutDate; // Standardized to YYYY-MM-DD
-                    staffHubSheet.getCell(targetRowIndex, 5).stringValue = newDate;  // F: Logout_Date (text)
+                    staffHubSheet.getCell(targetRowIndex, 5).value = `'${newDate}`;  // F: Logout_Date (text)
                     auditParts.push(`Logout date overridden to ${newDate}`);
                 }
 
@@ -1868,224 +1803,97 @@ export async function POST(request: Request) {
         }
 
 
-        if (action === 'GET_EXPENSES') {
-            if (!staffHubSheet) return NextResponse.json({ error: 'Staff Hub sheet not found' }, { status: 500 });
+        if (action === 'GET_EXPENSES') { return NextResponse.json({ error: 'Deprecated. Use GET ?tab=expenses' }, { status: 400 }); }
 
-            // Use getRows() so we match by header name, not fragile column index
-            const hubRows = await staffHubSheet.getRows();
-            const headers = staffHubSheet.headerValues || [];
-            console.log('[GET_EXPENSES] Staff Hub headers:', headers);
-
-            // Find columns by header name — multiple possible spellings
-            const amountHeader = headers.find((h: string) =>
-                /amount|expense.*amount|exp.*amt/i.test(h)
-            ) || '';
-            const descHeader = headers.find((h: string) =>
-                /description|expense.*desc|exp.*desc/i.test(h)
-            ) || '';
-            const dateHeader = headers.find((h: string) => /^date$/i.test(h)) || headers[0] || 'Date';
-            const nameHeader = headers.find((h: string) => /staff.*name|^name$/i.test(h)) || headers[1] || 'Staff_Name';
-
-            const expenses: { date: string; staffName: string; description: string; amount: number }[] = [];
-
-            for (const row of hubRows) {
-                let rawAmount = (amountHeader && row.get(amountHeader)) ?? null;
-                if (rawAmount === null || rawAmount === undefined || rawAmount === '') {
-                    rawAmount = row.get('Expense_Amount') ?? row.get('Amount') ?? row.get('Expense Amount') ?? null;
-                }
-                if (rawAmount === null || rawAmount === undefined || rawAmount === '') continue;
-
-                const amountVal = parseFloat(rawAmount?.toString().replace(/[^0-9.-]+/g, "") || '0');
-                if (isNaN(amountVal) || amountVal === 0) continue;
-
-                const dateVal = (dateHeader && row.get(dateHeader)) || row.get('Date') || '';
-                const nameVal = (nameHeader && row.get(nameHeader)) || row.get('Staff_Name') || row.get('Name') || 'Unknown';
-                const descVal = (descHeader && row.get(descHeader))
-                    || row.get('Expense_Description') || row.get('Description') || row.get('Expense Description') || 'Other';
-
-                expenses.push({
-                    date: dateVal?.toString() || '',
-                    staffName: nameVal?.toString() || 'Unknown',
-                    description: descVal?.toString() || 'Other',
-                    amount: amountVal,
-                });
-            }
-
-            let budgets: { description: string; amount: number }[] = [];
-            let categories: string[] = [];
-            const budgetSheet = doc.sheetsByTitle['OpEx_Budget'];
-            if (budgetSheet) {
-                try {
-                    await budgetSheet.loadCells('A1:B200');
-                    for (let i = 1; i < 200; i++) {
-                        const desc = budgetSheet.getCell(i, 0).value;
-                        const amt = budgetSheet.getCell(i, 1).value;
-                        if (desc && amt !== null && amt !== '') {
-                            budgets.push({
-                                description: desc.toString(),
-                                amount: typeof amt === 'number' ? amt : parseFloat(amt.toString().replace(/[^0-9.-]+/g, "") || '0')
-                            });
-                            if (!categories.includes(desc.toString())) {
-                                categories.push(desc.toString());
-                            }
-                        }
-                    }
-                } catch(e) { console.error('Error loading budgets', e) }
-            }
-
-            console.log(`[GET_EXPENSES] Returning ${expenses.length} expenses and ${budgets.length} budgets`);
-            return NextResponse.json({ expenses, budgets, categories });
-        }
-
-        if (action === 'ADD_EXPENSE') {
+        if (action === 'ADD_EXPENSE' || action === 'LOG_EXPENSE') {
             const { staffName, description, amount, date } = body;
-            console.log(`[ADD_EXPENSE] staffName=${staffName}, description=${description}, amount=${amount}`);
-
-            // Write to dedicated 'Expenses' sheet — create it if it doesn't exist yet
-            let expSheet = doc.sheetsByTitle['Expenses'];
-            if (!expSheet) {
-                expSheet = await doc.addSheet({
-                    title: 'Expenses',
-                    headerValues: ['Date', 'Staff_Name', 'Category', 'Amount', 'Notes'],
-                });
-                console.log('[ADD_EXPENSE] Created new Expenses sheet');
+            const expSheet = doc.sheetsByTitle['Expenses'];
+            if (!expSheet) return NextResponse.json({ error: 'Expenses sheet not found' }, { status: 500 });
+            
+            const maxRows = Math.max(expSheet.rowCount, 50);
+            await expSheet.loadCells(`A1:M${maxRows + 50}`);
+            
+            let isCogs = false;
+            for (let i = 1; i < maxRows; i++) {
+                const desc = expSheet.getCell(i, 0).value?.toString() || '';
+                if (desc === description && expSheet.getCell(i, 1).value === 'COGS') {
+                    isCogs = true; break;
+                }
             }
-
+            
+            let targetRow = 1;
+            const colOffset = isCogs ? 9 : 4; // 4=E, 9=J
+            for (let i = 1; i < maxRows + 50; i++) {
+                if (!expSheet.getCell(i, colOffset).value && !expSheet.getCell(i, colOffset+3).value) {
+                    targetRow = i; break;
+                }
+            }
+            
             const expDate = date || new Date().toLocaleDateString('en-PH', { timeZone: 'Asia/Manila' });
-            await expSheet.addRow({
-                Date: expDate,
-                Staff_Name: staffName || 'Admin (Dashboard)',
-                Category: description,
-                Amount: parseFloat(amount),
-                Notes: '',
-            });
-            console.log('[ADD_EXPENSE] ✅ Saved to Expenses sheet');
+            expSheet.getCell(targetRow, colOffset).value = expDate;
+            expSheet.getCell(targetRow, colOffset + 1).value = staffName || (action === 'LOG_EXPENSE' ? 'Staff' : 'Admin (Dashboard)');
+            expSheet.getCell(targetRow, colOffset + 2).value = description;
+            expSheet.getCell(targetRow, colOffset + 3).value = parseFloat(amount || '0');
+            await expSheet.saveUpdatedCells();
             return NextResponse.json({ success: true });
         }
 
         if (action === 'UPDATE_EXPENSE') {
-            const { rowIndex, description, amount, staffName, source } = body;
+            const { rowIndex, description, amount, staffName, isCOGS } = body;
             if (rowIndex === undefined || rowIndex === null) return NextResponse.json({ error: 'Missing rowIndex' }, { status: 400 });
 
-            if (source === 'Dashboard') {
-                // Update row in dedicated Expenses sheet
-                const expSheet = doc.sheetsByTitle['Expenses'];
-                if (!expSheet) return NextResponse.json({ error: 'Expenses sheet not found' }, { status: 500 });
-                const rows = await expSheet.getRows();
-                const target = rows[rowIndex];
-                if (!target) return NextResponse.json({ error: 'Row not found' }, { status: 404 });
-                if (description !== undefined) target.set('Category', description);
-                if (amount !== undefined) target.set('Amount', parseFloat(String(amount)));
-                if (staffName !== undefined) target.set('Staff_Name', staffName);
-                await target.save();
-            } else {
-                // Timekeeper expense — update L & M on Staff_&_Commission_Hub row
-                if (!staffHubSheet) return NextResponse.json({ error: 'Staff Hub sheet not found' }, { status: 500 });
-                await staffHubSheet.loadCells(`A1:N${LIMIT_STAFF_HUB}`);
-                if (description !== undefined) staffHubSheet.getCell(rowIndex, 11).value = description;
-                if (amount !== undefined) staffHubSheet.getCell(rowIndex, 12).value = parseFloat(String(amount));
-                if (staffName !== undefined) staffHubSheet.getCell(rowIndex, 1).value = staffName;
-                await staffHubSheet.saveUpdatedCells();
-            }
+            const expSheet = doc.sheetsByTitle['Expenses'];
+            if (!expSheet) return NextResponse.json({ error: 'Expenses sheet not found' }, { status: 500 });
+            await expSheet.loadCells(`A1:M${rowIndex + 10}`);
+
+            const colOffset = isCOGS ? 9 : 4;
+            if (description !== undefined) expSheet.getCell(rowIndex, colOffset + 2).value = description;
+            if (amount !== undefined) expSheet.getCell(rowIndex, colOffset + 3).value = parseFloat(String(amount));
+            if (staffName !== undefined) expSheet.getCell(rowIndex, colOffset + 1).value = staffName;
+            await expSheet.saveUpdatedCells();
             return NextResponse.json({ success: true });
         }
 
         if (action === 'DELETE_EXPENSE') {
-            const { rowIndex, source } = body;
+            const { rowIndex, isCOGS } = body;
             if (rowIndex === undefined || rowIndex === null) return NextResponse.json({ error: 'Missing rowIndex' }, { status: 400 });
-            console.log(`[DELETE_EXPENSE] source=${source}, rowIndex=${rowIndex}`);
 
-            if (source === 'Dashboard') {
-                // Delete row from dedicated Expenses sheet
-                const expSheet = doc.sheetsByTitle['Expenses'];
-                if (!expSheet) return NextResponse.json({ error: 'Expenses sheet not found' }, { status: 500 });
-                const rows = await expSheet.getRows();
-                const target = rows[rowIndex];
-                if (!target) return NextResponse.json({ error: 'Row not found' }, { status: 404 });
-                await target.delete();
-                console.log('[DELETE_EXPENSE] ✅ Deleted from Expenses sheet');
-            } else {
-                // Timekeeper expense — only clear L & M, keep the shift data
-                if (!staffHubSheet) return NextResponse.json({ error: 'Staff Hub sheet not found' }, { status: 500 });
-                await staffHubSheet.loadCells(`A1:N${LIMIT_STAFF_HUB}`);
-                staffHubSheet.getCell(rowIndex, 11).value = null;
-                staffHubSheet.getCell(rowIndex, 12).value = null;
-                await staffHubSheet.saveUpdatedCells();
-                console.log('[DELETE_EXPENSE] ✅ Cleared from Staff Hub');
-            }
+            const expSheet = doc.sheetsByTitle['Expenses'];
+            if (!expSheet) return NextResponse.json({ error: 'Expenses sheet not found' }, { status: 500 });
+            await expSheet.loadCells(`A1:M${rowIndex + 10}`);
+
+            const colOffset = isCOGS ? 9 : 4;
+            // Clear the 4 cells for this record
+            expSheet.getCell(rowIndex, colOffset).value = null;
+            expSheet.getCell(rowIndex, colOffset + 1).value = null;
+            expSheet.getCell(rowIndex, colOffset + 2).value = null;
+            expSheet.getCell(rowIndex, colOffset + 3).value = null;
+            await expSheet.saveUpdatedCells();
             return NextResponse.json({ success: true });
         }
 
         if (action === 'ADD_CATEGORY') {
-            const { categoryName, budgetAmount } = body;
+            const { categoryName, budgetAmount, isCOGS } = body;
             if (!categoryName) return NextResponse.json({ error: 'Missing categoryName' }, { status: 400 });
-            const budgetSheet = doc.sheetsByTitle['OpEx_Budget'];
-            if (!budgetSheet) return NextResponse.json({ error: 'OpEx_Budget sheet not found' }, { status: 500 });
+            const expSheet = doc.sheetsByTitle['Expenses'];
+            if (!expSheet) return NextResponse.json({ error: 'Expenses sheet not found' }, { status: 500 });
 
-            const maxBudgetRow = Math.min(budgetSheet.rowCount, LIMIT_BUDGET);
-            if (maxBudgetRow > 1) {
-                await budgetSheet.loadCells(`A1:B${maxBudgetRow}`);
-            }
+            const maxRows = Math.max(expSheet.rowCount, 50);
+            await expSheet.loadCells(`A1:C${maxRows + 50}`);
             
-            // Find next empty row
             let nextRow = 1;
-            let foundEmpty = false;
-            for (let i = 1; i < maxBudgetRow; i++) {
-                if (!budgetSheet.getCell(i, 0).value) { nextRow = i; foundEmpty = true; break; }
+            for (let i = 1; i < maxRows + 50; i++) {
+                if (!expSheet.getCell(i, 0).value) { nextRow = i; break; }
             }
             
-            if (foundEmpty) {
-                budgetSheet.getCell(nextRow, 0).value = categoryName;
-                budgetSheet.getCell(nextRow, 1).value = parseFloat(budgetAmount || '0');
-                await budgetSheet.saveUpdatedCells();
-                console.log(`[ADD_CATEGORY] Added "${categoryName}" at empty row ${nextRow}`);
-            } else {
-                // If everything is full (or maxBudgetRow is 1), gracefully append at the very bottom
-                await budgetSheet.addRow([categoryName, parseFloat(budgetAmount || '0')]);
-                console.log(`[ADD_CATEGORY] Appended "${categoryName}" to the bottom of the Sheet using addRow.`);
-            }
+            expSheet.getCell(nextRow, 0).value = categoryName;
+            expSheet.getCell(nextRow, 1).value = isCOGS ? 'COGS' : 'OPEX';
+            expSheet.getCell(nextRow, 2).value = parseFloat(budgetAmount || '0');
+            await expSheet.saveUpdatedCells();
             return NextResponse.json({ success: true });
         }
 
-        if (action === 'LOG_EXPENSE') {
-            if (!staffHubSheet) return NextResponse.json({ error: 'Staff Hub sheet not found' }, { status: 500 });
-            const { staffName, description, amount } = body;
-            console.log(`[LOG_EXPENSE] staffName=${staffName}, description=${description}, amount=${amount}`);
-
-            // Use direct cell-index access — same pattern as CLOCK_OUT (provably works)
-            // Column map: A=0(Date), B=1(Staff_Name), C=2(Role), D=3(Clock_In),
-            //             E=4(Clock_Out), F=5(Logout_Date), G=6(Hours), ...
-            //             L=11(Expense_Description), M=12(Expense_Amount)
-            await staffHubSheet.loadHeaderRow();
-            const maxRow = Math.min(staffHubSheet.rowCount, LIMIT_STAFF_HUB);
-            if (maxRow > 1) {
-                await staffHubSheet.loadCells(`A1:N${maxRow}`);
-            }
-
-            let targetRowIndex = -1;
-            // Walk backwards to find this staff member's most recent row with no Clock_Out
-            for (let r = maxRow - 1; r >= 1; r--) {
-                const nameCell = staffHubSheet.getCell(r, 1).value?.toString().trim(); // B
-                const clockOut = staffHubSheet.getCell(r, 4).value;                    // E
-                if (nameCell === staffName && !clockOut) {
-                    targetRowIndex = r;
-                    break;
-                }
-            }
-
-            console.log(`[LOG_EXPENSE] Found active session at row ${targetRowIndex}`);
-
-            if (targetRowIndex === -1) {
-                return NextResponse.json({ error: 'No active clock-in session found for this employee. Please clock in first.' }, { status: 400 });
-            }
-
-            staffHubSheet.getCell(targetRowIndex, 11).value = description; // L: Expense_Description
-            staffHubSheet.getCell(targetRowIndex, 12).value = parseFloat(amount); // M: Expense_Amount
-            await staffHubSheet.saveUpdatedCells();
-            console.log('[LOG_EXPENSE] ✅ Saved successfully');
-
-            return NextResponse.json({ success: true });
-        }
+        /* LOG_EXPENSE merged with ADD_EXPENSE */
 
         if (action === 'CREATE_ASSUMED_DELIVERY') {
             const { delivery, selectedDate } = body;
@@ -2636,13 +2444,13 @@ export async function POST(request: Request) {
 
             const custSheet = doc.sheetsByTitle['Customers'];
             if (!custSheet) return NextResponse.json({ error: 'Customers sheet not found' }, { status: 500 });
-            await custSheet.loadCells('A1:M500');
+            await custSheet.loadCells(`A1:M${LIMIT_CUSTOMERS}`);
 
             let targetRowIdx = -1;
-            for (let i = 1; i < 500; i++) {
+            for (let i = 1; i < LIMIT_CUSTOMERS; i++) {
                 const cell = custSheet.getCell(i, 0);
-                if (!cell.value) break;
-                if (cell.value.toString().trim() === String(editCid).trim()) {
+                if (!cell.value) continue;
+                if (String(cell.value).trim() === String(editCid).trim()) {
                     targetRowIdx = i;
                     break;
                 }
@@ -2670,13 +2478,13 @@ export async function POST(request: Request) {
 
             const custSheet = doc.sheetsByTitle['Customers'];
             if (!custSheet) return NextResponse.json({ error: 'Customers sheet not found' }, { status: 500 });
-            await custSheet.loadCells('A1:M500');
+            await custSheet.loadCells(`A1:M${LIMIT_CUSTOMERS}`);
 
             let targetRowIdx = -1;
-            for (let i = 1; i < 500; i++) {
+            for (let i = 1; i < LIMIT_CUSTOMERS; i++) {
                 const cell = custSheet.getCell(i, 0);
-                if (!cell.value) break;
-                if (cell.value.toString().trim() === String(delCid).trim()) {
+                if (!cell.value) continue;
+                if (String(cell.value).trim() === String(delCid).trim()) {
                     targetRowIdx = i;
                     break;
                 }
@@ -2690,7 +2498,7 @@ export async function POST(request: Request) {
             return NextResponse.json({ success: true });
         }
 
-        if (!action || action === 'CHECKOUT') {
+        if (!action || action === 'CHECKOUT' || action === 'REGISTER_CUSTOMER') {
             if (!salesSheet || !customersSheet) {
                 return NextResponse.json({ error: 'Sales or Customers sheet not found' }, { status: 500 });
             }
@@ -2699,29 +2507,31 @@ export async function POST(request: Request) {
             let goto_sales = false;
 
             if (customerType === 'new' || action === 'REGISTER_CUSTOMER') {
-                await customersSheet.loadCells('A1:B1000');
+                await customersSheet.loadCells(`A1:B${LIMIT_CUSTOMERS}`);
                 let maxCid = 0;
-                let firstEmptyRow = 1;
+                let firstEmptyRow = 0;
                 const incomingName = (customerName || newCustomerDetails?.name || '').trim().toLowerCase();
 
-                for (let i = 1; i < 1000; i++) {
+                for (let i = 1; i < LIMIT_CUSTOMERS; i++) {
                     const cidCell = customersSheet.getCell(i, 0);
                     if (!cidCell.value) {
-                        firstEmptyRow = i;
-                        break;
+                        if (firstEmptyRow === 0) firstEmptyRow = i;
+                        continue;
                     }
-                    const existingName = (customersSheet.getCell(i, 1).value || '').toString().trim().toLowerCase();
+                    const existingName = String(customersSheet.getCell(i, 1).value || '').trim().toLowerCase();
                     if (incomingName && existingName === incomingName) {
-                        assignedCid = cidCell.value.toString();
+                        assignedCid = String(cidCell.value);
                         if (action === 'REGISTER_CUSTOMER') {
                             return NextResponse.json({ success: true, cid: assignedCid, message: 'Customer already registered', duplicate: true });
                         }
                         goto_sales = true;
                         break;
                     }
-                    const num = parseInt(cidCell.value.toString(), 10);
+                    const num = parseInt(String(cidCell.value), 10);
                     if (!isNaN(num) && num > maxCid) maxCid = num;
                 }
+                
+                if (firstEmptyRow === 0) firstEmptyRow = LIMIT_CUSTOMERS; // fallback
 
                 if (!goto_sales) {
                     assignedCid = (maxCid + 1).toString();

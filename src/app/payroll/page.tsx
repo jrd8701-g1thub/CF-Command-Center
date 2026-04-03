@@ -69,7 +69,7 @@ const fmt = (n: number | string | undefined | null) => {
 
 export default function PayrollPage() {
     const [pin, setPin] = useState('');
-    const [adminPin, setAdminPin] = useState('');
+    const [adminPin, setAdminPin] = useState('615007');
     const [pinError, setPinError] = useState(false);
     const [unlocked, setUnlocked] = useState(false);
     const [loading, setLoading] = useState(true);
@@ -110,9 +110,9 @@ export default function PayrollPage() {
     }, []);
 
     useEffect(() => {
-        fetch('/api/sheet?tab=pos')
+        fetch('/api/sheet?tab=pos', { cache: 'no-store' })
             .then(r => r.json())
-            .then(d => { if (d.adminPin) setAdminPin(d.adminPin); })
+            .then(d => { if (d.adminPin) setAdminPin(String(d.adminPin)); })
             .catch(console.error)
             .finally(() => setLoading(false));
     }, []);
@@ -165,9 +165,9 @@ export default function PayrollPage() {
     const emp = payroll.find(e => e.name === selected);
 
     // Shared styles
-    const card: React.CSSProperties = { background: 'linear-gradient(135deg,rgba(15,23,42,0.97),rgba(15,30,55,0.97))', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 16 };
-    const lbl: React.CSSProperties = { color: 'rgba(255,255,255,0.4)', fontSize: 10, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase' };
-    const mono: React.CSSProperties = { fontFamily: 'monospace, monospace', fontSize: 12 };
+    const cardClass = "bg-charcoal-800 border border-white/5 rounded-2xl shadow-xl";
+    const lblClass = "text-[10px] font-bold tracking-widest uppercase text-slate-400";
+    const monoClass = "font-mono text-xs";
 
     // ── PIN Gate ───────────────────────────────────────────────────────────────
     if (!unlocked) return (
@@ -177,10 +177,10 @@ export default function PayrollPage() {
                 @keyframes spin{to{transform:rotate(360deg)}}
                 @keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
             `}</style>
-            <div style={{ ...card, padding: 40, textAlign: 'center', boxShadow: '0 30px 80px rgba(0,0,0,0.6)', animation: 'fadeUp 0.4s ease' }}>
+            <div className={cardClass} style={{ padding: 40, textAlign: 'center', boxShadow: '0 30px 80px rgba(0,0,0,0.6)', animation: 'fadeUp 0.4s ease' }}>
                 <div style={{ fontSize: 36, marginBottom: 16 }}>💼</div>
                 <div style={{ fontSize: 22, fontWeight: 900, color: '#fff', marginBottom: 4 }}>Payroll</div>
-                <div style={{ ...lbl, marginBottom: 28 }}>Admin access required</div>
+                <div className={lblClass} style={{ marginBottom: 28 }}>Admin access required</div>
                 <input
                     type="password" maxLength={6} autoFocus
                     value={pin} onChange={e => setPin(e.target.value)}
@@ -212,7 +212,7 @@ export default function PayrollPage() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28 }}>
                 <div>
                     <h2 style={{ fontSize: 28, fontWeight: 900, color: '#fff', letterSpacing: '-0.02em', margin: 0 }}>Payroll</h2>
-                    <p style={{ ...lbl, marginTop: 4, fontSize: 11 }}>● Shift & Commission Logs · {
+                    <p className={lblClass} style={{ marginTop: 4, fontSize: 11 }}>● Shift & Commission Logs · {
                         selectedDate ? new Date(selectedDate).toLocaleDateString() :
                             selectedWeeks.length > 0 ? `Week 40 - ${allWeeks[selectedWeeks[0]].start.toLocaleDateString()}` :
                                 selectedMonths.length > 0 ? selectedMonths[0] : 'Current Month'
@@ -227,7 +227,7 @@ export default function PayrollPage() {
                     }} style={{ background: 'rgba(255,255,255,0.06)', color: '#fff', fontWeight: 800, fontSize: 11, padding: '8px 16px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.1)', cursor: 'pointer' }}>
                         TODAY
                     </button>
-                    <button onClick={fetchPayroll} style={{ background: 'linear-gradient(135deg, #00D2FF, #3A7BD5)', color: '#000', fontWeight: 900, fontSize: 12, padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer', letterSpacing: '0.06em', boxShadow: '0 4px 20px rgba(0,210,255,0.25)' }}>
+                    <button onClick={fetchPayroll} className='bg-gradient-to-r from-brand-blue to-blue-500' style={{ background: 'transparent', color: '#000', fontWeight: 900, fontSize: 12, padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer', letterSpacing: '0.06em', boxShadow: '0 4px 20px rgba(0,210,255,0.25)' }}>
                         ↺ REFRESH
                     </button>
                     <button onClick={() => setUnlocked(false)} style={{ padding: '10px 20px', background: 'rgba(255,71,87,0.1)', border: '1px solid rgba(255,71,87,0.25)', borderRadius: 10, color: '#FF4757', fontSize: 11, fontWeight: 800, cursor: 'pointer' }}>🔒 Lock</button>
@@ -236,7 +236,7 @@ export default function PayrollPage() {
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <span style={{ ...lbl, fontSize: 11 }}>● Salary &amp; Commission Breakdown</span>
+                    <span className={lblClass} style={{ fontSize: 11 }}>● Salary &amp; Commission Breakdown</span>
                     <div style={{ width: 1, height: 12, background: 'rgba(255,255,255,0.1)' }} />
                     <button onClick={() => setIsFilterMode(!isFilterMode)}
                         style={{ background: isFilterMode ? '#00D2FF' : 'rgba(255,255,255,0.05)', border: 'none', borderRadius: 6, color: isFilterMode ? '#000' : 'rgba(255,255,255,0.5)', fontSize: 10, fontWeight: 800, padding: '3px 10px', cursor: 'pointer', transition: '0.2s' }}>
@@ -247,7 +247,7 @@ export default function PayrollPage() {
 
             {/* Period Selector — Sales History style */}
             <div style={{ position: 'relative', marginBottom: 20 }} ref={periodRef}>
-                <p style={{ ...lbl, marginBottom: 6 }}>Calendar</p>
+                <p className={lblClass} style={{ marginBottom: 6 }}>Calendar</p>
                 <button
                     onClick={() => setPeriodOpen(o => !o)}
                     style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 14px', background: selectedDate ? 'rgba(0,210,255,0.1)' : 'rgba(255,255,255,0.06)', border: `1px solid ${selectedDate ? 'rgba(0,210,255,0.3)' : 'rgba(255,255,255,0.1)'}`, borderRadius: 10, color: selectedDate ? '#00D2FF' : '#fff', fontSize: 13, fontWeight: 700, outline: 'none', cursor: 'pointer', minWidth: 200, boxSizing: 'border-box', whiteSpace: 'nowrap', transition: 'all 0.15s' }}
@@ -359,7 +359,7 @@ export default function PayrollPage() {
             )}
 
             {!loading && payroll.length === 0 && (
-                <div style={{ ...card, padding: 60, textAlign: 'center' }}>
+                <div className={cardClass} style={{ padding: 60, textAlign: 'center' }}>
                     <div style={{ fontSize: 36, marginBottom: 12, opacity: 0.3 }}>📋</div>
                     <p style={{ color: 'rgba(255,255,255,0.3)', fontStyle: 'italic' }}>No completed shift records found.</p>
                 </div>
@@ -370,9 +370,9 @@ export default function PayrollPage() {
 
                     {/* ── Employee Sidebar ── */}
                     {(!isFilterMode) && (
-                        <div className="pbi-c" style={{ ...card, overflow: 'hidden' }}>
+                        <div className={`pbi-c ${cardClass}`} style={{ overflow: 'hidden' }}>
                             <div style={{ padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                                <span style={lbl}>Employees</span>
+                                <span className={lblClass}>Employees</span>
                             </div>
                             {payroll.map(e => (
                                 <button key={e.name} className="emp-pill" onClick={() => { setSelected(e.name); setExpandedShifts(false); }}
@@ -385,8 +385,8 @@ export default function PayrollPage() {
                         </div>
                     )}
                     {isFilterMode && (
-                        <div className="pbi-c" style={{ ...card, padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
-                            <div style={lbl}>Select Person</div>
+                        <div className={`pbi-c ${cardClass}`} style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
+                            <div className={lblClass}>Select Person</div>
                             <select
                                 value={selected || ''}
                                 onChange={(e) => setSelected(e.target.value)}
@@ -411,8 +411,8 @@ export default function PayrollPage() {
                                         { label: 'Commission', value: fmt(emp.commission?.totalCommission || 0), color: '#FF9500', bg: 'rgba(255,149,0,0.08)', border: 'rgba(255,149,0,0.2)' },
                                         { label: 'Grand Total', value: fmt(emp.grandTotal), color: '#4ECB71', bg: 'rgba(78,203,113,0.08)', border: 'rgba(78,203,113,0.2)' },
                                     ].map(k => (
-                                        <div key={k.label} style={{ ...card, padding: '16px 18px', background: k.bg, border: `1px solid ${k.border}` }}>
-                                            <div style={{ ...lbl, color: k.color, marginBottom: 8 }}>{k.label}</div>
+                                        <div key={k.label} className={cardClass} style={{ padding: '16px 18px', background: k.bg, border: `1px solid ${k.border}` }}>
+                                            <div className={lblClass} style={{ color: k.color, marginBottom: 8 }}>{k.label}</div>
                                             <div style={{ fontSize: 20, fontWeight: 900, color: k.color }}>{k.value}</div>
                                         </div>
                                     ))}
@@ -427,40 +427,40 @@ export default function PayrollPage() {
                                             style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 10, color: '#fff', fontSize: 13, fontWeight: 700, padding: '12px 24px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, boxShadow: '0 4px 15px rgba(0,0,0,0.2)' }}>
                                             ⇠ EXIT DISCUSSION MODE
                                         </button>
-                                        <div style={{ ...lbl, fontSize: 12, color: '#00D2FF' }}>Viewing: {emp.name}</div>
+                                        <div className={lblClass} style={{ fontSize: 12, color: '#00D2FF' }}>Viewing: {emp.name}</div>
                                     </div>
 
                                     {/* Main Summary Cards */}
                                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                                        <div style={{ ...card, padding: '24px', background: 'rgba(167,139,250,0.07)', border: '1px solid rgba(167,139,250,0.2)', textAlign: 'center' }}>
-                                            <div style={{ ...lbl, color: '#A78BFA', marginBottom: 8 }}>Daily Salary (Base Pay)</div>
+                                        <div className={cardClass} style={{ padding: '24px', background: 'rgba(167,139,250,0.07)', border: '1px solid rgba(167,139,250,0.2)', textAlign: 'center' }}>
+                                            <div className={lblClass} style={{ color: '#A78BFA', marginBottom: 8 }}>Daily Salary (Base Pay)</div>
                                             <div style={{ fontSize: 32, fontWeight: 900, color: '#A78BFA' }}>{fmt(emp.totalBasePay)}</div>
                                             <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 4 }}>Total for {emp.shifts.length} shifts</div>
                                         </div>
-                                        <div style={{ ...card, padding: '24px', background: 'rgba(255,149,0,0.07)', border: '1px solid rgba(255,149,0,0.2)', textAlign: 'center' }}>
-                                            <div style={{ ...lbl, color: '#FF9500', marginBottom: 8 }}>Commission Earned</div>
+                                        <div className={cardClass} style={{ padding: '24px', background: 'rgba(255,149,0,0.07)', border: '1px solid rgba(255,149,0,0.2)', textAlign: 'center' }}>
+                                            <div className={lblClass} style={{ color: '#FF9500', marginBottom: 8 }}>Commission Earned</div>
                                             <div style={{ fontSize: 32, fontWeight: 900, color: '#FF9500' }}>{fmt(emp.commission?.totalCommission || 0)}</div>
                                             <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 4 }}>Based on deliveries</div>
                                         </div>
                                     </div>
 
-                                    <div style={{ ...card, padding: '32px', background: 'rgba(78,203,113,0.08)', border: '1px solid rgba(78,203,113,0.3)', textAlign: 'center', boxShadow: '0 10px 40px rgba(78,203,113,0.1)' }}>
-                                        <div style={{ ...lbl, color: '#4ECB71', marginBottom: 10, fontSize: 12 }}>Total Payout Amount</div>
+                                    <div className={cardClass} style={{ padding: '32px', background: 'rgba(78,203,113,0.08)', border: '1px solid rgba(78,203,113,0.3)', textAlign: 'center', boxShadow: '0 10px 40px rgba(78,203,113,0.1)' }}>
+                                        <div className={lblClass} style={{ color: '#4ECB71', marginBottom: 10, fontSize: 12 }}>Total Payout Amount</div>
                                         <div style={{ fontSize: 56, fontWeight: 900, color: '#4ECB71', letterSpacing: '-0.03em' }}>{fmt(emp.grandTotal)}</div>
                                         <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)', marginTop: 12, fontWeight: 600 }}>Release this amount for the selected period.</div>
                                     </div>
 
                                     {/* Itemized Commission Breakdown */}
-                                    <div style={{ ...card, overflow: 'hidden' }}>
+                                    <div className={cardClass} style={{ overflow: 'hidden' }}>
                                         <div style={{ padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.06)', background: 'rgba(255,255,255,0.02)' }}>
-                                            <span style={{ ...lbl, color: '#fff' }}>📋 Detailed Commission Breakdown</span>
+                                            <span className={lblClass} style={{ color: '#fff' }}>📋 Detailed Commission Breakdown</span>
                                             <p style={{ margin: '4px 0 0 0', fontSize: 10, color: 'rgba(255,255,255,0.3)' }}>Calculation: Ice = ₱1.00 per 25kg (pooled) | Water = ₱1.00 per container</p>
                                         </div>
                                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                             <thead>
                                                 <tr style={{ background: 'rgba(255,255,255,0.03)' }}>
                                                     {['Date', 'Customer', 'Item Detail', 'Qty', 'Weight', 'Commission'].map(h => (
-                                                        <th key={h} style={{ ...lbl, fontSize: 9, padding: '12px 14px', textAlign: h === 'Commission' || h === 'Qty' ? 'right' : 'left' }}>{h}</th>
+                                                        <th key={h} className={lblClass} style={{ fontSize: 9, padding: '12px 14px', textAlign: h === 'Commission' || h === 'Qty' ? 'right' : 'left' }}>{h}</th>
                                                     ))}
                                                 </tr>
                                             </thead>
@@ -481,7 +481,7 @@ export default function PayrollPage() {
 
                                                         return (
                                                             <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                                                                <td style={{ padding: '12px 14px', ...mono, color: 'rgba(255,255,255,0.5)', fontSize: 11 }}>{l.date}</td>
+                                                                <td className={monoClass} style={{ padding: '12px 14px', color: 'rgba(255,255,255,0.5)', fontSize: 11 }}>{l.date}</td>
                                                                 <td style={{ padding: '12px 14px', fontSize: 12, fontWeight: 700, color: '#fff' }}>{l.customer}</td>
                                                                 <td style={{ padding: '12px 14px', fontSize: 12, color: 'rgba(255,255,255,0.8)' }}>
                                                                     {l.itemName}
@@ -502,12 +502,12 @@ export default function PayrollPage() {
                                         </table>
                                         <div style={{ padding: '16px 20px', background: 'rgba(0,0,0,0.2)', borderTop: '1px solid rgba(255,255,255,0.06)', display: 'flex', justifyContent: 'flex-end', gap: 20 }}>
                                             <div style={{ textAlign: 'right' }}>
-                                                <div style={{ ...lbl, fontSize: 8 }}>Total Ice Weight</div>
+                                                <div className={lblClass} style={{ fontSize: 8 }}>Total Ice Weight</div>
                                                 <div style={{ fontSize: 16, fontWeight: 900, color: '#00D2FF' }}>{emp.commission.totalIceKg} kg</div>
                                             </div>
                                             <div style={{ width: 1, height: 30, background: 'rgba(255,255,255,0.1)' }} />
                                             <div style={{ textAlign: 'right' }}>
-                                                <div style={{ ...lbl, fontSize: 8 }}>Total Commission</div>
+                                                <div className={lblClass} style={{ fontSize: 8 }}>Total Commission</div>
                                                 <div style={{ fontSize: 16, fontWeight: 900, color: '#FF9500' }}>{fmt(emp.commission.totalCommission)}</div>
                                             </div>
                                         </div>
@@ -516,9 +516,9 @@ export default function PayrollPage() {
                             )}
 
                             {/* Shift History */}
-                            <div style={{ ...card, overflow: 'hidden', marginTop: isFilterMode ? 20 : 0 }}>
+                            <div className={cardClass} style={{ overflow: 'hidden', marginTop: isFilterMode ? 20 : 0 }}>
                                 <div style={{ padding: '12px 20px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <span style={lbl}>⏱ Daily Salary Logs (shifts)</span>
+                                    <span className={lblClass}>⏱ Daily Salary Logs (shifts)</span>
                                     <button onClick={() => setExpandedShifts(v => !v)}
                                         style={{ padding: '4px 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, color: 'rgba(255,255,255,0.5)', fontSize: 10, fontWeight: 800, cursor: 'pointer' }}>
                                         {expandedShifts ? 'Show Less ▲' : 'Show All ▼'}
@@ -528,7 +528,7 @@ export default function PayrollPage() {
                                     <thead>
                                         <tr style={{ background: 'rgba(0,0,0,0.2)' }}>
                                             {['Login Date', 'Login Time', 'Logout Time', 'Hours', 'Pay', 'Comm', 'Override?'].map(h => (
-                                                <th key={h} style={{ ...lbl, fontSize: 8, padding: '8px 14px', textAlign: ['Hours', 'Pay', 'Comm'].includes(h) ? 'right' : 'left', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>{h}</th>
+                                                <th key={h} className={lblClass} style={{ fontSize: 8, padding: '8px 14px', textAlign: ['Hours', 'Pay', 'Comm'].includes(h) ? 'right' : 'left', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>{h}</th>
                                             ))}
                                         </tr>
                                     </thead>
@@ -540,9 +540,9 @@ export default function PayrollPage() {
 
                                             return (
                                                 <tr key={i} className="sh-row" style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                                                    <td style={{ padding: '10px 14px', ...mono, color: 'rgba(255,255,255,0.7)' }}>{s.date}</td>
-                                                    <td style={{ padding: '10px 14px', ...mono, color: '#00D2FF', fontWeight: 800 }}>{s.clockIn}</td>
-                                                    <td style={{ padding: '10px 14px', ...mono, color: '#FF9500', fontWeight: 800 }}>{s.clockOut}</td>
+                                                    <td className={monoClass} style={{ padding: '10px 14px', color: 'rgba(255,255,255,0.7)' }}>{s.date}</td>
+                                                    <td className={monoClass} style={{ padding: '10px 14px', color: '#00D2FF', fontWeight: 800 }}>{s.clockIn}</td>
+                                                    <td className={monoClass} style={{ padding: '10px 14px', color: '#FF9500', fontWeight: 800 }}>{s.clockOut}</td>
                                                     <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 900, color: '#4ECB71', fontSize: 12 }}>{s.hours}h</td>
                                                     <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 900, color: '#A78BFA', fontSize: 12 }}>{fmt(s.netPay)}</td>
                                                     <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 900, color: '#FF9500', fontSize: 12 }}>{shiftComm > 0 ? `+₱${shiftComm.toFixed(2)}` : '—'}</td>
@@ -559,7 +559,7 @@ export default function PayrollPage() {
                                 </table>
                                 <div style={{ padding: '16px 20px', background: 'rgba(78,203,113,0.05)', borderTop: '1px solid rgba(78,203,113,0.15)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                     <div>
-                                        <div style={{ ...lbl, color: '#4ECB71' }}>Grand Total Payout</div>
+                                        <div className={lblClass} style={{ color: '#4ECB71' }}>Grand Total Payout</div>
                                         <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 3 }}>Base Pay {fmt(emp.totalBasePay)} + Commission {fmt(emp.commission?.totalCommission || 0)}</div>
                                     </div>
                                     <div style={{ fontSize: 26, fontWeight: 900, color: '#4ECB71' }}>{fmt(emp.grandTotal)}</div>
