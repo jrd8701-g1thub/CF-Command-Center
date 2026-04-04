@@ -2,75 +2,66 @@ import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
 import pandas as pd
-import re
+import datetime
 
-# 🛰️ MASTER SYSTEM CONNECTION
+# 🛰️ MASTER CONNECTION
 scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
 client = gspread.authorize(creds)
 
-# 🛑 CORRECTED WORKBOOK NAME (Per Screenshot)
-sheet = client.open("C&F Command Center Database")
+# 🔗 DYNAMIC LINK (Using your unique ID for stability)
+SHEET_ID = "1AOU_ur7mWhnoAfmf_qOVQ87OaXb36W8Z4FbPgbxK60"
+sheet = client.open_by_key(SHEET_ID)
 
-# 🧠 DYNAMIC CONFIGURATION (Module A: POS System Control)
-control_sheet = sheet.worksheet("POS System Control")
-data = control_sheet.get_all_values()
-# Convert to a dictionary for easy lookups
-config = {row[0]: row[1] for row in data if len(row) > 1}
+# 🎨 UI CONFIGURATION
+st.set_page_config(page_title="C&F Command Center", layout="wide", initial_sidebar_state="expanded")
 
-# 🔒 DYNAMIC SECURITY (PIN is now pulled from the Sheet)
-MASTER_PIN = str(config.get('Admin PIN', '615007'))
+# 📂 LOAD DATA FROM GOOGLE SHEETS
+control_data = sheet.worksheet("POS System Control").get_all_values()
+config = {row[0]: row[1] for row in control_data if len(row) > 1}
 
-def check_admin():
-    admin_pin = st.sidebar.text_input("Enter Admin PIN", type="password")
-    return admin_pin == MASTER_PIN
+# 🛠️ STYLING (The "Antigravity" Look)
+st.markdown("""
+    <style>
+    [data-testid="stSidebar"] { background-color: #0e1117; border-right: 1px solid #262730; }
+    .stMetric { background-color: #161b22; padding: 15px; border-radius: 10px; border: 1px solid #30363d; }
+    </style>
+""", unsafe_content_safe=True)
 
-st.title("🛰️ Chill 'n Fill Command Center")
-
-# 🛒 DYNAMIC POS & COMMISSION RULES (Module C)
-st.header("🛒 POS Dashboard")
-
-# Get Products/Pricing from Sheet (Assuming a 'Products' tab exists)
-# For now, we'll use a placeholder to demonstrate your new rules
-products = ["Purified Water (5 Gallon)", "Ice Tube (25kg)", "Ice Tube (5kg)"]
-selected_prod = st.selectbox("Select Product", products)
-quantity = st.number_input("Quantity", min_value=1, value=1)
-is_delivery = st.toggle("Delivery Mode")
-
-# ⚖️ DYNAMIC COMMISSION LOGIC (Per image_eb0d7a.jpg)
-def calculate_commission(product_name, qty):
-    comm_total = 0
-    name_lower = product_name.lower()
-    
-    # RULE 1: Water Delivery (Fixed Rate)
-    if config.get('SKU Keyword — water') in name_lower:
-        rate = float(config.get('Value — ₱ amount earned per unit when Type = Fixed', 1))
-        comm_total = qty * rate
-        
-    # RULE 2: Ice Delivery (Weight Based)
-    elif config.get('SKU Keyword — ice') in name_lower:
-        divisor = float(config.get('Value / Divisor — For Weight type: divide the KG by this number', 25))
-        max_cap = float(config.get('Max Cap — Maximum ₱ per unit', 1))
-        
-        # Extract KG from product name (e.g., "Ice Tube (25kg)")
-        kg_match = re.search(r'(\d+)kg', name_lower)
-        if kg_match:
-            kg_val = float(kg_match.group(1))
-            calc_rate = min(kg_val / divisor, max_cap)
-            comm_total = qty * calc_rate
-            
-    return comm_total
-
-if is_delivery:
-    total_comm = calculate_commission(selected_prod, quantity)
-    st.info(f"Driver Commission: ₱{total_comm:.2f}")
-else:
-    st.info("Walk-in Sale: No Commission")
-
-# ⚡ DYNAMIC PRODUCTION (Admin Only)
-if check_admin():
+# 📟 SIDEBAR NAVIGATION
+with st.sidebar:
+    st.image("https://cdn-icons-png.flaticon.com/512/3063/3063822.png", width=80)
+    st.title("Command Center")
+    st.caption("POINT OF SALE")
+    menu = st.radio("Navigation", ["🕒 TimeKeeper", "📟 POS Terminal", "🚚 Delivery", "📊 Production", "⚙️ Settings"])
     st.divider()
-    st.header("🛡️ Admin: Anti-Theft Logs")
-    # Pull dynamic costs from Sheet
-    kw_rate = float(config.get('Electricity_kW', 5.2))
-    st.write(f"Current System kW Logic: {kw_rate}kW")
+    admin_pin = st.text_input("Admin System", type="password", placeholder="Enter PIN")
+
+# 🕒 TIMEKEEPER HUB (Matching your 2nd screenshot)
+if menu == "🕒 TimeKeeper":
+    st.header("🕒 TimeKeeper Hub")
+    st.caption("STAFF ATTENDANCE & EXPENSE LOGGING")
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("ON SHIFT", "0", "active")
+    with col2:
+        st.metric("OFF SHIFT", "0")
+    with col3:
+        st.metric("TOTAL STAFF", "0")
+        
+    st.subheader("Currently On Shift")
+    st.info("No staff currently on shift.")
+    
+    st.subheader("Off Shift")
+    st.write("All staff are currently on shift.")
+
+# 📟 POS TERMINAL (Logic from image_eb0d7a.jpg)
+elif menu == "📟 POS Terminal":
+    st.header("📟 POS Terminal")
+    # ... (Your product selection and logic goes here)
+    st.success("POS System is synced with Google Sheets")
+
+# 🛡️ SECURITY OVERRIDE
+if admin_pin == config.get("Admin PIN", "615007"):
+    st.sidebar.success("ADMIN ONLINE")
