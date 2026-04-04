@@ -70,3 +70,6 @@ insert_helper_column.mjs
 
 # Logs
 *.log
+.npm-cache/
+.home-mock/
+node_modules/
