@@ -28,7 +28,7 @@ interface ProductionEntry {
     units_1KG: number; units_3KG: number; units_5KG: number; units_10KG: number;
     units_25KG: number; units_30KG: number; units_45KG: number;
     totalWeight: number; expectedYield: number; variance: string;
-    elecCost: number; staffName: string;
+    elecCost: number; staffName: string; auditLog?: string;
 }
 
 function StatBar({ value, max, color }: { value: number; max: number; color: string }) {
@@ -50,12 +50,13 @@ export default function ProductionPage() {
     const [endTime, setEndTime] = useState('17:00');
     const [selectedQuantities, setSelectedQuantities] = useState<Record<string, number>>({});
     const [staffName, setStaffName] = useState('');
-    const [employees, setEmployees] = useState<string[]>([]);
+    const [employees, setEmployees] = useState<any[]>([]);
     const [history, setHistory] = useState<ProductionEntry[]>([]);
     const [adminPin, setAdminPin] = useState('');
     const [editingRun, setEditingRun] = useState<ProductionEntry | null>(null);
     const [editPin, setEditPin] = useState('');
     const [isSaving, setIsSaving] = useState(false);
+    const [iceProducts, setIceProducts] = useState<{name: string, weight: number}[]>(ICE_PRODUCTS);
 
     // Period Selection State
     const allWeeks = useMemo(() => getWorkWeeks(), []);
@@ -74,9 +75,20 @@ export default function ProductionPage() {
             fetch('/api/sheet?tab=production').then(r => r.json()).catch(() => ({})),
         ]).then(([posData, staffData, prod]) => {
             if (posData?.adminPin) setAdminPin(posData.adminPin);
+            if (posData?.productTypes) {
+                const dynamicSkus = posData.productTypes
+                    .filter((p: string) => p !== 'ICE PRODUCTS' && p)
+                    .map((p: string) => {
+                        const match = p.match(/^(\d+)KG/i);
+                        if (match) return { name: `${match[1].toUpperCase()}KG`, weight: parseInt(match[1]) };
+                        return null;
+                    })
+                    .filter(Boolean);
+                if (dynamicSkus.length > 0) setIceProducts(dynamicSkus);
+            }
             // tab=staff returns { employees: [{name, role, basePay}] }
             if (Array.isArray(staffData?.employees)) {
-                setEmployees(staffData.employees.map((e: { name: string }) => e.name).filter(Boolean));
+                setEmployees(staffData.employees.filter((e: any) => e.name));
             }
             // API already reverses the array, so use as-is; parse all numeric fields
             if (Array.isArray(prod?.productionHistory)) {
@@ -113,7 +125,7 @@ export default function ProductionPage() {
     const endMs = new Date(`2000-01-01T${endTime}:00`).getTime();
     let hours = (endMs - startMs) / 3600000;
     if (hours < 0) hours += 24;
-    const totalWeight = Object.entries(selectedQuantities).reduce((s, [n, q]) => s + (ICE_PRODUCTS.find(p => p.name === n)?.weight || 0) * q, 0);
+    const totalWeight = Object.entries(selectedQuantities).reduce((s, [n, q]) => s + (iceProducts.find(p => p.name === n)?.weight || 0) * q, 0);
     const expectedYield = +(hours * 42).toFixed(2);
     const variance = expectedYield > 0 ? ((totalWeight - expectedYield) / expectedYield) * 100 : 0;
     const isCritical = variance < -10;
@@ -196,6 +208,7 @@ export default function ProductionPage() {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     action: 'LOG_PRODUCTION',
+                    loggedInUser: localStorage.getItem('loggedInUser') || 'Admin',
                     log: {
                         date: new Date().toLocaleDateString('en-CA'), startTime, endTime,
                         totalHours: hours.toFixed(2),
@@ -220,7 +233,7 @@ export default function ProductionPage() {
                             totalHours: n(h.totalHours), totalWeight: n(h.totalWeight), expectedYield: n(h.expectedYield), elecCost: n(h.elecCost),
                             units_1KG: n(h.units_1KG), units_3KG: n(h.units_3KG), units_5KG: n(h.units_5KG), units_10KG: n(h.units_10KG),
                             units_25KG: n(h.units_25KG), units_30KG: n(h.units_30KG), units_45KG: n(h.units_45KG),
-                            variance: h.variance?.toString() || '0%', date: h.date?.toString() || '', staffName: h.staffName?.toString() || '',
+                            variance: h.variance?.toString() || '0%', date: h.date?.toString() || '', staffName: h.staffName?.toString() || '', auditLog: h.auditLog?.toString() || '',
                         })));
                     }
                 });
@@ -232,7 +245,10 @@ export default function ProductionPage() {
 
     const handleUpdateRun = async () => {
         if (!editingRun) return;
-        if (editPin !== adminPin) { alert('Incorrect Admin PIN'); return; }
+        if (!editPin.trim()) { alert('Please enter a PIN'); return; }
+        const user = employees.find(e => e.pin === editPin);
+        if (!user && editPin !== adminPin) { alert('Incorrect PIN'); return; }
+        const loggedInUserForEdit = user ? user.name : 'Admin';
         setIsSaving(true);
         try {
             const res = await fetch('/api/sheet', {
@@ -249,14 +265,16 @@ export default function ProductionPage() {
                         units_25KG: editingRun.units_25KG,
                         units_30KG: editingRun.units_30KG,
                         units_45KG: editingRun.units_45KG,
-                        totalWeight: Object.entries(editingRun).reduce((s, [k, v]) => {
-                            if (!k.startsWith('units_')) return s;
-                            const sku = k.split('_')[1];
-                            const weight = ICE_PRODUCTS.find(p => p.name === sku)?.weight || 0;
-                            return s + weight * (v as number);
+                        totalWeight: Object.keys(editingRun).reduce((sum, key) => {
+                            if (key.startsWith('units_')) {
+                                const weight = iceProducts.find(p => `units_${p.name}` === key)?.weight || 0;
+                                return sum + (editingRun[key as keyof ProductionEntry] as number || 0) * weight;
+                            }
+                            return sum;
                         }, 0),
                         staffName: editingRun.staffName
-                    }
+                    },
+                    loggedInUser: loggedInUserForEdit
                 })
             });
             if (res.ok) {
@@ -344,7 +362,7 @@ export default function ProductionPage() {
                                 <div className="relative">
                                     <select value={staffName} onChange={e => setStaffName(e.target.value)} required className={inpClass}>
                                         <option value="" className="bg-charcoal-900 italic">Select Staff</option>
-                                        {employees.map(emp => <option key={emp} value={emp} className="bg-charcoal-900">{emp}</option>)}
+                                        {employees.map(emp => <option key={emp.name} value={emp.name} className="bg-charcoal-900">{emp.name}</option>)}
                                     </select>
                                     <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-slate-500 text-[10px]">▼</div>
                                 </div>
@@ -371,7 +389,7 @@ export default function ProductionPage() {
 
                         <p className={`${lblClass} mb-4`}>Actual Units Packed</p>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-8">
-                            {ICE_PRODUCTS.map(product => {
+                            {iceProducts.map(product => {
                                 const active = selectedQuantities[product.name] !== undefined;
                                 return (
                                     <div key={product.name} 
@@ -571,7 +589,7 @@ export default function ProductionPage() {
                                     <table className="w-full border-collapse">
                                         <thead className="sticky top-0 z-20 bg-charcoal-800 shadow-xl">
                                             <tr className="bg-black/40">
-                                                {['Run Date', 'Operator', 'Hrs', 'Weight', 'Var', 'Opt'].map(h => (
+                                                {['Run Date', 'Operator', 'Hrs', 'Weight', 'Var', 'Audit Log', 'Opt'].map(h => (
                                                     <th key={h} className={`${lblClass} px-4 py-3 text-left bg-transparent whitespace-nowrap`}>
                                                         {h}
                                                     </th>
@@ -589,6 +607,7 @@ export default function ProductionPage() {
                                                         <td className="px-4 py-3.5 text-xs font-black text-brand-blue tabular-nums">{(run.totalHours || 0).toFixed(1)}h</td>
                                                         <td className="px-4 py-3.5 text-xs font-black text-brand-green tabular-nums">{run.totalWeight.toLocaleString()} KG</td>
                                                         <td className={`px-4 py-3.5 text-xs font-black tabular-nums ${vColor}`}>{v > 0 ? '+' : ''}{v.toFixed(1)}%</td>
+                                                        <td className="px-4 py-3.5 text-[9px] font-bold text-slate-500 whitespace-nowrap">{run.auditLog || '—'}</td>
                                                         <td className="px-4 py-3.5">
                                                             <button onClick={() => setEditingRun({ ...run })} 
                                                                 className="px-2.5 py-1 bg-white/5 border border-white/10 rounded-md text-[9px] font-black text-slate-500 hover:text-white hover:bg-brand-blue/20 hover:border-brand-blue/50 transition-all uppercase tracking-tighter">
@@ -626,7 +645,7 @@ export default function ProductionPage() {
                         </div>
 
                         <div className="grid grid-cols-2 gap-4 mb-8">
-                            {ICE_PRODUCTS.map(p => (
+                            {iceProducts.map(p => (
                                 <div key={p.name}>
                                     <label className={`${lblClass} block mb-2`}>{p.name} Units Output</label>
                                     <input type="number" 
@@ -641,7 +660,7 @@ export default function ProductionPage() {
                                     <select value={editingRun.staffName} 
                                         onChange={e => setEditingRun({ ...editingRun, staffName: e.target.value })} 
                                         className={inpClass}>
-                                        {employees.map(e => <option key={e} value={e} className="bg-charcoal-900 font-bold">{e}</option>)}
+                                        {employees.map(e => <option key={e.name} value={e.name} className="bg-charcoal-900 font-bold">{e.name}</option>)}
                                     </select>
                                     <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-slate-500 text-[10px]">▼</div>
                                 </div>

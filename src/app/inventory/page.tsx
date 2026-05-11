@@ -171,6 +171,7 @@ export default function InventoryPage() {
     // Per-SKU audit records (stored locally after submissions)
     const [skuAudits, setSkuAudits] = useState<Record<string, { status: 'accurate' | 'inaccurate'; variance: number; date: string }>>({});
     const [auditingSku, setAuditingSku] = useState<string | null>(null);
+    const [icePackaging, setIcePackaging] = useState<string[]>(ICE_PACKAGING);
 
     const [selectedDate, setSelectedDate] = useState<string>('');
     const [selectedMonths, setSelectedMonths] = useState<string[]>([]);
@@ -207,6 +208,16 @@ export default function InventoryPage() {
             setSales(s.sales || []);
             setAudits(a.audits || []);
             if (pos.adminPin) setAdminPin(pos.adminPin);
+            if (pos.productTypes) {
+                const dynamicSkus = pos.productTypes
+                    .filter((p: string) => p !== 'ICE PRODUCTS' && p)
+                    .map((p: string) => {
+                        const match = p.match(/^(\d+)KG/i);
+                        return match ? `${match[1].toUpperCase()}KG` : null;
+                    })
+                    .filter(Boolean);
+                if (dynamicSkus.length > 0) setIcePackaging(dynamicSkus);
+            }
         }).catch(console.error).finally(() => setLoading(false));
     }, []);
 
@@ -252,19 +263,19 @@ export default function InventoryPage() {
 
     const stock = useMemo(() => {
         const s: Record<string, number> = {};
-        ICE_PACKAGING.forEach(p => s[p] = 0);
-        production.forEach(log => ICE_PACKAGING.forEach(p => { const v = parseInt(log[`units_${p}`]?.toString() || '0'); if (!isNaN(v)) s[p] += v; }));
-        sales.forEach(sale => ICE_PACKAGING.forEach(p => { if (sale.itemName.toUpperCase().includes(p)) { const v = parseInt(sale.quantity?.toString() || '0'); if (!isNaN(v)) s[p] -= v; } }));
-        audits.forEach(audit => ICE_PACKAGING.forEach(p => { const v = parseInt(audit[`missing_${p}`]?.toString() || '0'); if (!isNaN(v)) s[p] -= v; }));
+        icePackaging.forEach(p => s[p] = 0);
+        production.forEach(log => icePackaging.forEach(p => { const v = parseInt(log[`units_${p}`]?.toString() || '0'); if (!isNaN(v)) s[p] += v; }));
+        sales.forEach(sale => icePackaging.forEach(p => { if (sale.itemName.toUpperCase().includes(p)) { const v = parseInt(sale.quantity?.toString() || '0'); if (!isNaN(v)) s[p] -= v; } }));
+        audits.forEach(audit => icePackaging.forEach(p => { const v = parseInt(audit[`missing_${p}`]?.toString() || '0'); if (!isNaN(v)) s[p] -= v; }));
         return s;
-    }, [production, sales, audits]);
+    }, [production, sales, audits, icePackaging]);
 
     const orders = useMemo(() => {
         const o: Record<string, number> = {};
-        ICE_PACKAGING.forEach(p => o[p] = 0);
-        sales.forEach(sale => ICE_PACKAGING.forEach(p => { if (sale.itemName.toUpperCase().includes(p)) { const v = parseInt(sale.quantity?.toString() || '0'); if (!isNaN(v)) o[p] += v; } }));
+        icePackaging.forEach(p => o[p] = 0);
+        sales.forEach(sale => icePackaging.forEach(p => { if (sale.itemName.toUpperCase().includes(p)) { const v = parseInt(sale.quantity?.toString() || '0'); if (!isNaN(v)) o[p] += v; } }));
         return o;
-    }, [sales]);
+    }, [sales, icePackaging]);
 
     const produced = useMemo(() => {
         const pr: Record<string, number> = {};
@@ -291,19 +302,19 @@ export default function InventoryPage() {
                 } catch { return false; }
             });
         }
-        rows.forEach(log => ICE_PACKAGING.forEach(p => { const v = parseInt(log[`units_${p}`]?.toString() || '0'); if (!isNaN(v)) pr[p] += v; }));
+        rows.forEach(log => icePackaging.forEach(p => { const v = parseInt(log[`units_${p}`]?.toString() || '0'); if (!isNaN(v)) pr[p] += v; }));
         return pr;
-    }, [production, skuSelectedDate, skuSelectedMonths, skuSelectedWeeks, allWeeks]);
+    }, [production, skuSelectedDate, skuSelectedMonths, skuSelectedWeeks, allWeeks, icePackaging]);
 
-    const totalStock = ICE_PACKAGING.reduce((s, p) => s + Math.max(0, stock[p]), 0);
-    const totalSold = ICE_PACKAGING.reduce((s, p) => s + orders[p], 0);
-    const totalProduced = ICE_PACKAGING.reduce((s, p) => s + produced[p], 0);
+    const totalStock = icePackaging.reduce((s, p) => s + Math.max(0, stock[p]), 0);
+    const totalSold = icePackaging.reduce((s, p) => s + orders[p], 0);
+    const totalProduced = icePackaging.reduce((s, p) => s + produced[p], 0);
 
     // Audit stats
     const accurateCount = Object.values(skuAudits).filter(a => a.status === 'accurate').length + audits.filter(a => a.status === 'Match').length;
     const inaccurateCount = Object.values(skuAudits).filter(a => a.status === 'inaccurate').length + audits.filter(a => a.status === 'Mismatch').length;
     const totalVariance = Object.values(skuAudits).reduce((s, a) => s + a.variance, 0) +
-        audits.filter(a => a.status === 'Mismatch').reduce((s, a) => s + ICE_PACKAGING.reduce((sv, p) => sv + (parseInt(a[`missing_${p}`]?.toString() || '0') || 0), 0), 0);
+        audits.filter(a => a.status === 'Mismatch').reduce((s, a) => s + icePackaging.reduce((sv, p) => sv + (parseInt(a[`missing_${p}`]?.toString() || '0') || 0), 0), 0);
 
     // Payment breakdown helpers
     const getPaidCredit = (saleList: Sale[]) => {
@@ -362,10 +373,10 @@ export default function InventoryPage() {
 
     const skuOrders = useMemo(() => {
         const o: Record<string, number> = {};
-        ICE_PACKAGING.forEach(p => o[p] = 0);
-        skuSales.forEach(sale => ICE_PACKAGING.forEach(p => { if (sale.itemName.toUpperCase().includes(p)) { const v = parseInt(sale.quantity?.toString() || '0'); if (!isNaN(v)) o[p] += v; } }));
+        icePackaging.forEach(p => o[p] = 0);
+        skuSales.forEach(sale => icePackaging.forEach(p => { if (sale.itemName.toUpperCase().includes(p)) { const v = parseInt(sale.quantity?.toString() || '0'); if (!isNaN(v)) o[p] += v; } }));
         return o;
-    }, [skuSales]);
+    }, [skuSales, icePackaging]);
 
     const handleSkuAuditSave = (sku: string, status: 'accurate' | 'inaccurate', variance: number) => {
         const date = new Date().toLocaleDateString('en-CA');
@@ -382,7 +393,7 @@ export default function InventoryPage() {
                     date,
                     status: status === 'accurate' ? 'Match' : 'Mismatch',
                     sku,
-                    ...Object.fromEntries(ICE_PACKAGING.map(p => [`missing_${p}`, p === sku && status === 'inaccurate' ? variance : 0])),
+                    ...Object.fromEntries(icePackaging.map(p => [`missing_${p}`, p === sku && status === 'inaccurate' ? variance : 0])),
                     staff: 'Admin'
                 }
             })
@@ -394,7 +405,7 @@ export default function InventoryPage() {
         if (!auditStatus) return;
         setSaving(true);
         try {
-            const body = { action: 'LOG_AUDIT', audit: { date: new Date().toLocaleDateString('en-CA'), status: auditStatus === 'match' ? 'Match' : 'Mismatch', ...Object.fromEntries(ICE_PACKAGING.map(p => [`missing_${p}`, auditStatus === 'match' ? 0 : (missing[p] || 0)])), staff: 'Admin' } };
+            const body = { action: 'LOG_AUDIT', audit: { date: new Date().toLocaleDateString('en-CA'), status: auditStatus === 'match' ? 'Match' : 'Mismatch', ...Object.fromEntries(icePackaging.map(p => [`missing_${p}`, auditStatus === 'match' ? 0 : (missing[p] || 0)])), staff: 'Admin' } };
             const res = await fetch('/api/sheet', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
             if (res.ok) { alert('Audit saved!'); window.location.reload(); } else throw new Error();
         } catch { alert('Error saving audit'); }
@@ -598,9 +609,9 @@ export default function InventoryPage() {
                     
                     <div className="relative mb-8 flex flex-1 items-center justify-center py-4">
                         <div className="relative">
-                            {ICE_PACKAGING.map((p, i) => {
+                            {icePackaging.map((p, i) => {
                                 const val = Math.max(0, stock[p]);
-                                const tot = ICE_PACKAGING.reduce((s, pk) => s + Math.max(0, stock[pk]), 0);
+                                const tot = icePackaging.reduce((s, pk) => s + Math.max(0, stock[pk]), 0);
                                 return (
                                     <div key={p} className="absolute inset-0 transition-transform duration-1000 group-hover:scale-105" style={{ zIndex: 10 - i }}>
                                         <DonutChart value={val} max={tot || 1} color={COLORS[i]} size={180} thickness={10 - i * 0.5} />
@@ -615,7 +626,7 @@ export default function InventoryPage() {
                     </div>
 
                     <div className="grid grid-cols-2 gap-x-4 gap-y-2 border-t border-white/5 pt-6">
-                        {ICE_PACKAGING.map((p, i) => (
+                        {icePackaging.map((p, i) => (
                             <div key={p} className="flex items-center gap-3 group/item">
                                 <div className="h-2 w-2 rounded-full shadow-sm transition-transform group-hover/item:scale-125" style={{ backgroundColor: COLORS[i] }} />
                                 <span className="text-[11px] font-bold text-white/60 tracking-tight">{p}</span>
@@ -654,7 +665,7 @@ export default function InventoryPage() {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-white/[0.03]">
-                                {ICE_PACKAGING.map((p, i) => {
+                                {icePackaging.map((p, i) => {
                                     const remaining = stock[p];
                                     const prod = produced[p];
                                     const sold = skuOrders[p];
@@ -750,7 +761,7 @@ export default function InventoryPage() {
                                     </td>
                                 </tr>
                             ) : filteredProduction.map((run: any, idx) => {
-                                const units = ICE_PACKAGING.map((p, i) => ({ packaging: p, count: parseInt(run[`units_${p}`] || 0), color: COLORS[i] })).filter(u => u.count > 0);
+                                const units = icePackaging.map((p, i) => ({ packaging: p, count: parseInt(run[`units_${p}`] || 0), color: COLORS[i] })).filter(u => u.count > 0);
                                 const totalCount = units.reduce((s, u) => s + u.count, 0);
                                 const varianceVal = parseFloat(run.variance) || 0;
                                 return (

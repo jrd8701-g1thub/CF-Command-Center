@@ -118,7 +118,7 @@ export default function DeliveryPage() {
                 setDeliveries(prev => prev.map(d => d.transactionId === transactionId ? finalDelivery : d));
                 await fetch('/api/sheet', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'UPDATE_DELIVERY', transactionId, deliveryStatus: updates.deliveryStatus ?? delivery.deliveryStatus, driver: updates.driver ?? delivery.driver, helper: updates.helper ?? delivery.helper, paymentStatus: updates.paymentStatus ?? delivery.paymentStatus })
+                    body: JSON.stringify({ action: 'UPDATE_DELIVERY', transactionId, deliveryStatus: updates.deliveryStatus ?? delivery.deliveryStatus, driver: updates.driver ?? delivery.driver, helper: updates.helper ?? delivery.helper, paymentStatus: updates.paymentStatus ?? delivery.paymentStatus, loggedInUser: localStorage.getItem('loggedInUser') || 'Admin' })
                 });
             }
         } catch (e) { console.error(e); }
@@ -156,7 +156,7 @@ export default function DeliveryPage() {
             if (editingDelivery.transactionId.startsWith('ASSUMED-')) {
                 const res = await fetch('/api/sheet', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'CREATE_ASSUMED_DELIVERY', delivery: finalDelivery, selectedDate })
+                    body: JSON.stringify({ action: 'CREATE_ASSUMED_DELIVERY', delivery: finalDelivery, selectedDate, loggedInUser: localStorage.getItem('loggedInUser') || 'Admin' })
                 });
                 const data = await res.json();
                 if (data.success && data.transactionId) {
@@ -170,7 +170,8 @@ export default function DeliveryPage() {
                         transactionId: editingDelivery.transactionId,
                         updates: editDeliveryFields,
                         currentDate: editingDelivery.unplannedDate,
-                        currentTime: editingDelivery.preferredTime
+                        currentTime: editingDelivery.preferredTime,
+                        loggedInUser: localStorage.getItem('loggedInUser') || 'Admin'
                     })
                 });
                 if (res.ok) {

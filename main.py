@@ -10,7 +10,7 @@ creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"],
 client = gspread.authorize(creds)
 
 # 🔗 DYNAMIC LINK (Using your unique ID for stability)
-SHEET_ID = "1AOU_ur7mWhnoAfmf_qOVQ87OaXb36W8Z4FbPgbxK60"
+SHEET_ID = "15AOU_ur7mWhnoAFmf_qOVQ87OaXb36W8z4FbPgbxK60"
 sheet = client.open_by_key(SHEET_ID)
 
 # 🎨 UI CONFIGURATION
@@ -26,7 +26,7 @@ st.markdown("""
     [data-testid="stSidebar"] { background-color: #0e1117; border-right: 1px solid #262730; }
     .stMetric { background-color: #161b22; padding: 15px; border-radius: 10px; border: 1px solid #30363d; }
     </style>
-""", unsafe_content_safe=True)
+""", unsafe_allow_html=True)
 
 # 📟 SIDEBAR NAVIGATION
 with st.sidebar:

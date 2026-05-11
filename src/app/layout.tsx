@@ -10,6 +10,8 @@ export const metadata: Metadata = {
   description: "Point of Sale Stage 1",
 };
 
+import AuthWrapper from "@/components/AuthWrapper";
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -18,14 +20,16 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${inter.variable} font-sans bg-charcoal-900 text-foreground antialiased selection:bg-brand-teal/30`}>
-        <div className="flex min-h-screen">
-          <Navigation />
-          <main className="flex-1 ml-64 p-6 overflow-x-hidden min-h-screen">
-            <div className="max-w-[1600px] mx-auto w-full">
-              {children}
-            </div>
-          </main>
-        </div>
+        <AuthWrapper>
+          <div className="flex min-h-screen">
+            <Navigation />
+            <main className="flex-1 ml-64 p-6 overflow-x-hidden min-h-screen">
+              <div className="max-w-[1600px] mx-auto w-full">
+                {children}
+              </div>
+            </main>
+          </div>
+        </AuthWrapper>
       </body>
     </html>
   );

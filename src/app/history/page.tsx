@@ -33,6 +33,7 @@ function getWorkWeeks() {
 
 
 const ICE_PACKAGING = ['1KG', '3KG', '5KG', '10KG', '25KG', '30KG', '45KG', 'Water'];
+const deliveryTimes = ['06:00 AM', '07:00 AM', '08:00 AM', '09:00 AM', '10:00 AM', '11:00 AM', '12:00 PM', '01:00 PM', '02:00 PM', '03:00 PM', '04:00 PM', '05:00 PM', '06:00 PM', '07:00 PM', '08:00 PM', '09:00 PM', '10:00 PM', '11:00 PM'];
 const COLORS = ['#00D2FF', '#7B61FF', '#FF6B6B', '#FFD93D', '#4ECB71', '#FF8A5C', '#A78BFA', '#00CEC9'];
 const SKU_COLORS = ['#00D2FF', '#4ECB71', '#A78BFA', '#FFD93D', '#FF9500', '#FF4757', '#00CEC9', '#FDCB6E'];
 
@@ -97,30 +98,52 @@ export default function SalesHistoryPage() {
     const [activeTab, setActiveTab] = useState<'table' | 'charts'>('table');
     const [skuSortConfig, setSkuSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null);
     const [heatmapMode, setHeatmapMode] = useState<'scheduled' | 'unscheduled' | 'both'>('both');
-    const [updatingTxn, setUpdatingTxn] = useState<string | null>(null);
-    const [editingTxn, setEditingTxn] = useState<string | null>(null);
+    const [editingSale, setEditingSale] = useState<Sale | null>(null);
+    const [editFields, setEditFields] = useState({
+        customerName: '', itemName: '', quantity: '', unitPrice: '',
+        orderType: '', paymentMethod: '', deliveryDate: '', deliveryTime: ''
+    });
+    const [editSaving, setEditSaving] = useState(false);
+    const [staffList, setStaffList] = useState<any[]>([]);
+    const [adminPin, setAdminPin] = useState('');
+    const [editPin, setEditPin] = useState('');
 
-    const handleToggleStatus = async (transactionId: string, itemName: string, currentStatus: string) => {
-        const newStatus = currentStatus === 'Paid' ? 'Credit' : 'Paid';
-        setUpdatingTxn(transactionId + itemName);
+    const handleSaveEditSale = async () => {
+        if (!editingSale) return;
+        
+        if (!editPin.trim()) { alert('Please enter a PIN'); return; }
+        const user = staffList.find(s => s.pin === editPin);
+        if (!user && editPin !== adminPin) { alert('Incorrect PIN'); return; }
+        const loggedInUserForEdit = user ? user.name : 'Admin';
+
+        setEditSaving(true);
         try {
-            const staffName = localStorage.getItem('staffName') || sessionStorage.getItem('staffName') || 'Admin';
+            const body = {
+                action: 'UPDATE_SALE_ROW',
+                transactionId: editingSale.transactionId,
+                itemName: editingSale.itemName,
+                updates: editFields,
+                staffName: loggedInUserForEdit
+            };
             const res = await fetch('/api/sheet', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'TOGGLE_SALE_STATUS', transactionId, itemName, staffName, newStatus })
+                body: JSON.stringify(body)
             });
-            if (!res.ok) throw new Error('Failed to update payment status');
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.error || 'Failed to update sale');
+            }
 
             // Re-fetch sales
             const freshRes = await fetch('/api/sheet?tab=sales');
             const data = await freshRes.json();
             setSales(data.sales || []);
+            setEditingSale(null);
         } catch (err: any) {
-            alert('Error updating status: ' + err.message);
+            alert('Error updating sale: ' + err.message);
         } finally {
-            setUpdatingTxn(null);
-            setEditingTxn(null);
+            setEditSaving(false);
         }
     };
 
@@ -128,15 +151,21 @@ export default function SalesHistoryPage() {
     useEffect(() => {
         async function fetchSales() {
             try {
-                const [salesRes, custRes] = await Promise.all([
+                const [salesRes, custRes, staffRes, posRes] = await Promise.all([
                     fetch('/api/sheet?tab=sales'),
-                    fetch('/api/sheet')
+                    fetch('/api/sheet'),
+                    fetch('/api/sheet?tab=staff'),
+                    fetch('/api/sheet?tab=pos')
                 ]);
                 if (!salesRes.ok || !custRes.ok) throw new Error('Failed to fetch data');
                 const salesData = await salesRes.json();
                 const custData = await custRes.json();
+                const staffData = await staffRes.json().catch(() => ({}));
+                const posData = await posRes.json().catch(() => ({}));
                 setSales(salesData.sales || []);
                 setCustomers(custData.customers || []);
+                setStaffList(staffData.employees || []);
+                setAdminPin(posData.adminPin || '');
             } catch (err: unknown) { setError((err as Error).message); }
             finally { setLoading(false); }
         }
@@ -886,14 +915,14 @@ export default function SalesHistoryPage() {
                         <table className="w-full border-collapse min-w-[900px]">
                             <thead>
                                 <tr className="bg-black/30 sticky top-0 z-10 backdrop-blur-sm">
-                                    {['WW', 'Timestamp', 'Reference', 'Client', 'SKU', 'Units', 'Revenue', 'Status'].map(h => (
+                                    {['WW', 'Timestamp', 'Reference', 'Client', 'Type', 'Fulfillment', 'SKU', 'Units', 'Revenue', 'Status'].map(h => (
                                         <th key={h} className={`${lblClass} text-[8px] px-4 py-3 ${['WW', 'Units', 'Revenue', 'Status'].includes(h) ? 'text-center' : 'text-left'} border-b border-white/5 whitespace-nowrap`}>{h}</th>
                                     ))}
                                 </tr>
                             </thead>
                             <tbody>
                                 {filteredSales.length === 0 ? (
-                                    <tr><td colSpan={8} className="p-16 text-center text-white/20 italic text-sm">No transactions matching filters.</td></tr>
+                                    <tr><td colSpan={10} className="p-16 text-center text-white/20 italic text-sm">No transactions matching filters.</td></tr>
                                 ) : filteredSales.map((sale, idx) => {
                                     const saleDate = new Date(sale.timestamp.split(',')[0]);
                                     const jan1 = new Date(saleDate.getFullYear(), 0, 1);
@@ -910,6 +939,18 @@ export default function SalesHistoryPage() {
                                             <td className="px-4 py-2.5 min-w-[120px]">
                                                 <div className="font-bold text-white text-xs">{sale.customerName}</div>
                                                 <div className="text-[9px] text-white/30 font-mono">ID: {sale.cid}</div>
+                                            </td>
+                                            <td className="px-4 py-2.5">
+                                                <span className={`text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-md ${sale.orderType.toLowerCase().includes('walk') || sale.customerName === 'Walk-in' ? 'bg-amber-400/10 text-amber-400' : 'bg-brand-blue/10 text-brand-blue'}`}>
+                                                    {sale.orderType.split(' (')[0] || sale.orderType}
+                                                </span>
+                                            </td>
+                                            <td className="px-4 py-2.5">
+                                                {sale.orderType.includes('(') ? (
+                                                    <span className={`text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-md border ${sale.orderType.toLowerCase().includes('delivery') ? 'bg-brand-violet/10 text-brand-violet border-brand-violet/30' : 'bg-charcoal-700/50 text-slate-400 border-charcoal-600'}`}>
+                                                        {sale.orderType.toLowerCase().includes('delivery') ? '🚚 Delivery' : '🏪 Pickup'}
+                                                    </span>
+                                                ) : <span className="text-white/20">—</span>}
                                             </td>
                                             <td className="px-4 py-2.5">
                                                 <span className="text-[11px] font-bold px-2 py-0.5 rounded-md whitespace-nowrap" style={{ color: skuColor, background: `${skuColor}18` }}>{sale.itemName}</span>
@@ -929,19 +970,23 @@ export default function SalesHistoryPage() {
                                                             </span>
                                                         )}
                                                         <button
-                                                            onClick={() => setEditingTxn(editingTxn === sale.transactionId + sale.itemName ? null : sale.transactionId + sale.itemName)}
+                                                            onClick={() => {
+                                                                setEditingSale(sale);
+                                                                setEditFields({
+                                                                    customerName: sale.customerName,
+                                                                    itemName: sale.itemName,
+                                                                    quantity: sale.quantity,
+                                                                    unitPrice: sale.unitPrice,
+                                                                    orderType: sale.orderType,
+                                                                    paymentMethod: sale.paymentMethod,
+                                                                    deliveryDate: sale.unplannedDate || '',
+                                                                    deliveryTime: sale.unplannedTime || ''
+                                                                });
+                                                            }}
                                                             className="px-2 py-1 bg-white/5 border border-white/20 rounded-md text-white text-[9px] font-bold cursor-pointer hover:bg-white/10 transition-colors whitespace-nowrap">
                                                             ✎ Edit
                                                         </button>
                                                     </div>
-                                                    {editingTxn === sale.transactionId + sale.itemName && (
-                                                        <button
-                                                            onClick={() => handleToggleStatus(sale.transactionId, sale.itemName, sale.paymentMethod)}
-                                                            disabled={updatingTxn === sale.transactionId + sale.itemName}
-                                                            className={`px-3 py-1.5 rounded-md text-[9px] font-black uppercase w-[120px] mx-auto mt-1 transition-opacity ${updatingTxn === sale.transactionId + sale.itemName ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} ${sale.paymentMethod === 'Paid' ? 'bg-gradient-to-br from-red-400 to-red-600 text-white' : 'bg-gradient-to-br from-brand-green to-emerald-600 text-black'}`}>
-                                                            {updatingTxn === sale.transactionId + sale.itemName ? 'UPDATING...' : (sale.paymentMethod === 'Paid' ? '✕ TO CREDIT' : '✓ TO PAID')}
-                                                        </button>
-                                                    )}
                                                 </div>
                                             </td>
                                         </tr>
@@ -959,6 +1004,131 @@ export default function SalesHistoryPage() {
                                 </tfoot>
                             )}
                         </table>
+                    </div>
+                </div>
+            )}
+
+            {/* ══ EDIT SALE MODAL ══════════════════════════════════════════════════════ */}
+            {editingSale && (
+                <div className="fixed inset-0 z-[999] flex items-center justify-center bg-charcoal-950/80 backdrop-blur-sm p-4" onClick={() => setEditingSale(null)}>
+                    <div className="bg-charcoal-900 border border-brand-blue/30 rounded-2xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl" onClick={e => e.stopPropagation()}>
+                        <div className="flex justify-between items-start mb-6 border-b border-charcoal-700 pb-4">
+                            <div>
+                                <h3 className="text-xl font-black text-white">Edit Sale Entry</h3>
+                                <p className="text-xs font-bold text-slate-500 mt-1 uppercase tracking-widest">TXN {editingSale.transactionId} · {editingSale.timestamp?.split(',')[1]?.trim()}</p>
+                            </div>
+                            <button onClick={() => setEditingSale(null)} className="w-8 h-8 flex items-center justify-center rounded-full bg-charcoal-800 text-slate-400 hover:text-white hover:bg-charcoal-700 transition-colors">✕</button>
+                        </div>
+
+                        <div className="space-y-4">
+                            {([
+                                { label: 'Customer Name', key: 'customerName', type: 'text' },
+                                { label: 'SKU / Item', key: 'itemName', type: 'text' },
+                                { label: 'Quantity', key: 'quantity', type: 'number' },
+                                { label: 'Unit Price (₱)', key: 'unitPrice', type: 'number' },
+                            ] as { label: string; key: keyof typeof editFields; type: string }[]).map(f => (
+                                <div key={f.key}>
+                                    <label className="block text-[10px] font-black uppercase tracking-widest text-brand-blue mb-1.5">{f.label}</label>
+                                    <input
+                                        type={f.type}
+                                        value={(editFields as any)[f.key]}
+                                        onChange={e => setEditFields(prev => ({ ...prev, [f.key]: e.target.value }))}
+                                        className="w-full px-4 py-3 bg-charcoal-800 border border-charcoal-700 focus:border-brand-blue rounded-xl text-sm font-bold text-white outline-none transition-colors"
+                                    />
+                                </div>
+                            ))}
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-[10px] font-black uppercase tracking-widest text-brand-teal mb-1.5">Payment Method</label>
+                                    <select
+                                        value={editFields.paymentMethod}
+                                        onChange={e => setEditFields(prev => ({ ...prev, paymentMethod: e.target.value }))}
+                                        className="w-full px-4 py-3 bg-charcoal-800 border border-charcoal-700 focus:border-brand-teal rounded-xl text-sm font-bold text-white outline-none transition-colors appearance-none cursor-pointer"
+                                    >
+                                        {['Paid', 'Credit'].map(o => <option key={o} value={o}>{o}</option>)}
+                                    </select>
+                                </div>
+
+                                <div>
+                                    <label className="block text-[10px] font-black uppercase tracking-widest text-brand-blue mb-1.5">Fulfillment</label>
+                                    <div className="flex gap-2 h-[46px]">
+                                        {(['Pickup', 'Delivery'] as const).map(mode => {
+                                            const isActive = editFields.orderType.toLowerCase().includes(mode.toLowerCase());
+                                            return (
+                                                <button
+                                                    key={mode}
+                                                    type="button"
+                                                    onClick={() => {
+                                                        const current = editFields.orderType;
+                                                        const prefix = current.replace(/\s*\((Pickup|Delivery)\)\s*/i, '').trim() || 'Regular';
+                                                        setEditFields(prev => ({ ...prev, orderType: `${prefix} (${mode})` }));
+                                                    }}
+                                                    className={`flex-1 rounded-xl text-xs font-black uppercase tracking-wider border transition-all ${
+                                                        isActive
+                                                            ? mode === 'Delivery'
+                                                                ? 'bg-brand-blue/20 border-brand-blue/60 text-brand-blue shadow-[0_0_8px_rgba(58,134,255,0.25)]'
+                                                                : 'bg-brand-teal/20 border-brand-teal/60 text-brand-teal'
+                                                            : 'bg-charcoal-800 border-charcoal-600 text-slate-400 hover:border-slate-500'
+                                                    }`}
+                                                >
+                                                    {mode === 'Pickup' ? '🏪 Pickup' : '🚚 Delivery'}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {editFields.orderType.toLowerCase().includes('delivery') && (
+                                <div className="grid grid-cols-2 gap-4 pt-2 border-t border-charcoal-700/50 mt-2">
+                                    <div>
+                                        <label className="block text-[10px] font-black uppercase tracking-widest text-brand-violet mb-1.5">Delivery Date</label>
+                                        <input
+                                            type="date"
+                                            value={editFields.deliveryDate}
+                                            onChange={e => setEditFields(prev => ({ ...prev, deliveryDate: e.target.value }))}
+                                            className="w-full px-4 py-3 bg-charcoal-800 border border-brand-violet/30 focus:border-brand-violet rounded-xl text-sm font-bold text-white outline-none transition-colors"
+                                            style={{ colorScheme: 'dark' }}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] font-black uppercase tracking-widest text-brand-violet mb-1.5">Delivery Time</label>
+                                        <select
+                                            value={editFields.deliveryTime}
+                                            onChange={e => setEditFields(prev => ({ ...prev, deliveryTime: e.target.value }))}
+                                            className="w-full px-4 py-3 bg-charcoal-800 border border-brand-violet/30 focus:border-brand-violet rounded-xl text-sm font-bold text-white outline-none transition-colors appearance-none cursor-pointer"
+                                        >
+                                            <option value="">-- Select Time (optional) --</option>
+                                            {deliveryTimes.map(dt => <option key={dt} value={dt}>{dt}</option>)}
+                                        </select>
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="bg-black/20 p-5 rounded-xl border border-white/5 mt-6">
+                                <p className="block text-[10px] font-black uppercase tracking-widest text-brand-yellow mb-3">⚠️ System Audit Authentication</p>
+                                <input type="password" value={editPin} onChange={e => setEditPin(e.target.value)}
+                                    placeholder="● ● ● ● ● ●" maxLength={6}
+                                    className="w-full px-4 py-3 bg-charcoal-800 text-center text-2xl tracking-[0.6em] border border-brand-yellow/20 focus:border-brand-yellow/50 rounded-xl font-bold text-white outline-none transition-colors" />
+                            </div>
+                        </div>
+
+                        <div className="flex gap-3 justify-end mt-8">
+                            <button
+                                onClick={() => setEditingSale(null)}
+                                className="px-6 py-2.5 bg-charcoal-800 hover:bg-charcoal-700 border border-charcoal-600 rounded-xl text-xs font-bold text-slate-300 transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleSaveEditSale}
+                                disabled={editSaving}
+                                className="px-6 py-2.5 bg-brand-blue hover:bg-brand-blue/90 border border-brand-blue text-white rounded-xl text-xs font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_0_15px_rgba(58,134,255,0.3)] disabled:shadow-none"
+                            >
+                                {editSaving ? 'Saving...' : 'Save Changes'}
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}

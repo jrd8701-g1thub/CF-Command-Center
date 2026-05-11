@@ -18,7 +18,7 @@ function POSHome() {
 
   // Cart state
   const [cart, setCart] = useState<(POSItem & { quantity: number; cartItemId: string })[]>([]);
-  const [customerType, setCustomerType] = useState<'walkin' | 'regular' | 'new'>('walkin');
+  const [customerType, setCustomerType] = useState<'walkin' | 'regular' | 'new'>('regular');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -29,23 +29,37 @@ function POSHome() {
   });
   const [selectedProducts, setSelectedProducts] = useState<Record<string, number>>({});
 
+  // Build product list dynamically from POS_System_Control sheet data
+  // productTypes = ['ICE PRODUCTS', '1KG Ice', '3KG Ice', '5KG Ice', ...]
+  // We map '1KG Ice' → 'Ice - 1KG' to match the display format in the customer modal
   const newCustomerProducts = [
     'Water (Delivery)',
-    'Ice - 1KG',
-    'Ice - 3KG',
-    'Ice - 5KG',
-    'Ice - 10KG',
-    'Ice - 25KG',
-    'Ice - 30KG',
-    'Ice - 45KG'
+    ...productTypes
+      .filter(p => p !== 'ICE PRODUCTS' && p)
+      .map(p => {
+        // Sheet name format: "1KG Ice", "3KG Ice", etc.
+        // Display format: "Ice - 1KG"
+        const sizeMatch = p.match(/^(\d+KG)/i);
+        return sizeMatch ? `Ice - ${sizeMatch[1].toUpperCase()}` : `Ice - ${p}`;
+      })
   ];
 
   // Global POS State
   const [paymentType, setPaymentType] = useState('Paid');
   const [loggedInUser, setLoggedInUser] = useState('Admin');
+  const [staffList, setStaffList] = useState<any[]>([]);
+  const [adminPin, setAdminPin] = useState('');
+  const [editPin, setEditPin] = useState('');
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const user = localStorage.getItem('loggedInUser');
+      if (user) setLoggedInUser(user);
+    }
+  }, []);
 
   // Checkout Delivery State
-  const [checkoutDeliveryStatus, setCheckoutDeliveryStatus] = useState<'Pickup' | 'Delivery'>('Pickup');
+  const [checkoutDeliveryStatus, setCheckoutDeliveryStatus] = useState<'Pickup' | 'Delivery'>('Delivery');
   const today = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in local timezone, not UTC
   const [checkoutDeliveryDate, setCheckoutDeliveryDate] = useState(today);
   const [checkoutDeliveryTime, setCheckoutDeliveryTime] = useState('');
@@ -105,8 +119,10 @@ function POSHome() {
         setItems(data.items || []);
         setCustomers(data.customers || []);
         setProductTypes(data.productTypes || []);
+        setAdminPin(data.adminPin || '');
         if (staffRes.ok) {
           const staffData = await staffRes.json();
+          setStaffList(staffData.employees || []);
           setEmployeeNames((staffData.employees || []).map((e: { name: string }) => e.name));
         }
       } catch (err: unknown) {
@@ -142,7 +158,7 @@ function POSHome() {
       setSelectedCustomer(null);
     }
     if (type === 'walkin') {
-      setCheckoutDeliveryStatus('Pickup');
+      setCheckoutDeliveryStatus('Delivery');
       setPaymentType('Paid');
     }
   };
@@ -196,18 +212,9 @@ function POSHome() {
   };
 
   const handleRegisterCustomer = async () => {
-    // Validate all required fields
-    const missing: string[] = [];
-    if (!newCustomerDetails.name) missing.push('Company / Customer Name');
-    if (!newCustomerDetails.contactPerson) missing.push('Contact Person');
-    if (!newCustomerDetails.mobile) missing.push('Mobile Number');
-    if (!newCustomerDetails.address) missing.push('Address');
-    if (!newCustomerDetails.distance) missing.push('Distance');
-    if (!newCustomerDetails.deliverySched) missing.push('Delivery Schedule');
-    if (!newCustomerDetails.deliveryTime) missing.push('Delivery Time');
-    if (Object.keys(selectedProducts).length === 0) missing.push('Product Type (at least 1)');
-    if (missing.length > 0) {
-      alert(`Please fill in the following required fields:\n• ${missing.join('\n• ')}`);
+    // Only Company / Customer Name is required
+    if (!newCustomerDetails.name) {
+      alert('Please fill in the Company / Customer Name before registering.');
       return;
     }
 
@@ -241,17 +248,21 @@ function POSHome() {
         })
       });
 
-      if (!res.ok) throw new Error('Registration failed');
+      if (!res.ok) {
+        let errMsg = 'Registration failed';
+        try { const e = await res.json(); errMsg = e.error || errMsg; } catch {}
+        throw new Error(errMsg);
+      }
       const data = await res.json();
       if (data.error) throw new Error(data.error);
 
       alert(`Customer registered successfully! CID: ${data.cid}`);
       setNewCustomerDetails({ name: '', contactPerson: '', mobile: '', fbName: '', address: '', distance: '', deliverySched: '', deliveryTime: '' });
       setSelectedProducts({});
-      setCustomerType('walkin');
+      setCustomerType('regular');
 
-      // Reset for walk-in
-      setCheckoutDeliveryStatus('Pickup');
+      // Reset for regular
+      setCheckoutDeliveryStatus('Delivery');
       setPaymentType('Paid');
 
       // Optionally re-fetch data so they show up in the dropdown
@@ -359,7 +370,7 @@ function POSHome() {
       if (!res.ok) throw new Error('Delete failed');
       alert('Customer deleted.');
       setSelectedCustomer(null);
-      setCustomerType('walkin');
+      setCustomerType('regular');
       const getRes = await fetch('/api/sheet');
       const getData = await getRes.json();
       if (!getData.error) setCustomers(getData.customers || []);
@@ -371,16 +382,10 @@ function POSHome() {
   const handleSaveEditSale = async () => {
     if (!editingSale) return;
 
-    // Strict validation when editing order type to Delivery
-    const currentOrderType = String(editFields.orderType ?? '');
-    if (currentOrderType.toLowerCase().includes('delivery')) {
-      const dDate = editFields.deliveryDate;
-      const dTime = editFields.deliveryTime;
-      if (!dDate || !dTime || dTime.toLowerCase() === 'pickup') {
-        alert(`Please provide a valid Delivery Date and Delivery Time for this Delivery order. (Current inputs: Date="${dDate}", Time="${dTime}")`);
-        return;
-      }
-    }
+    if (!editPin.trim()) { alert('Please enter a PIN'); return; }
+    const user = staffList.find(s => s.pin === editPin);
+    if (!user && editPin !== adminPin) { alert('Incorrect PIN'); return; }
+    const loggedInUserForEdit = user ? user.name : 'Admin';
 
     setEditSaving(true);
     try {
@@ -392,11 +397,13 @@ function POSHome() {
           transactionId: editingSale.transactionId,
           itemName: editingSale.itemName, // used to locate specific row among multi-item TXNs
           updates: editFields,
+          staffName: loggedInUserForEdit
         })
       });
       if (!res.ok) throw new Error('Failed to update');
       await fetchTodaySales();
       setEditingSale(null);
+      setEditPin('');
     } catch (err: unknown) {
       alert('Update failed: ' + (err as Error).message);
     } finally {
@@ -408,10 +415,6 @@ function POSHome() {
     if (cart.length === 0) return;
     if (customerType === 'regular' && !selectedCustomer) {
       alert('Please select a customer from the dropdown before checking out.');
-      return;
-    }
-    if (checkoutDeliveryStatus === 'Delivery' && !checkoutDeliveryTime) {
-      alert('Please select a delivery time before checking out.');
       return;
     }
 
@@ -462,12 +465,12 @@ function POSHome() {
       setCart([]);
       alert(`Order successfully completely! TXN ID: ${data.transactionId}`);
       setSelectedCustomer(null);
-      setCustomerType('walkin');
+      setCustomerType('regular');
       setNewCustomerDetails({ name: '', contactPerson: '', mobile: '', fbName: '', address: '', distance: '', deliverySched: '', deliveryTime: '' });
       setSelectedProducts({});
       setSearchQuery('');
       setPaymentType('Paid');
-      setCheckoutDeliveryStatus('Pickup');
+      setCheckoutDeliveryStatus('Delivery');
       setCheckoutDeliveryDate(new Date().toISOString().split('T')[0]); // reset to today
       setCheckoutDeliveryTime('');
     } catch (err: any) {
@@ -792,9 +795,9 @@ function POSHome() {
             <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-top-4 duration-200 mt-2">
               <select
                 className="w-full max-w-md px-4 py-3 bg-charcoal-900 border border-brand-blue/50 rounded-lg text-brand-blue font-bold text-sm outline-none focus:border-brand-blue focus:ring-1 focus:ring-brand-blue/50 transition-all shadow-[0_0_10px_rgba(58,134,255,0.1)]"
-                value={selectedCustomer?.id || ''}
+                value={selectedCustomer?.name || ''}
                 onChange={(e) => {
-                  const c = customers.find(c => c.id === e.target.value);
+                  const c = customers.find(c => c.name === e.target.value);
                   if (c) handleApplyCustomerOrder(c);
                   else setSelectedCustomer(null);
                 }}
@@ -802,9 +805,9 @@ function POSHome() {
               >
                 <option value="">-- Select Regular Customer --</option>
                 {[...customers]
-                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .sort((a, b) => a.name.trim().localeCompare(b.name.trim()))
                   .map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
+                    <option key={`${c.cid}-${c.name}`} value={c.name}>{c.name}</option>
                   ))}
               </select>
 
@@ -996,12 +999,12 @@ function POSHome() {
                         style={{ colorScheme: 'dark' }}
                       />
                       <select
-                        className={`px-3 py-2 bg-charcoal-800 border rounded-lg text-xs font-bold outline-none focus:border-brand-blue flex-1 ${!checkoutDeliveryTime ? 'border-red-500/50 text-red-500' : 'border-brand-blue/30 text-white'}`}
+                        className={`px-3 py-2 bg-charcoal-800 border rounded-lg text-xs font-bold outline-none focus:border-brand-blue flex-1 ${checkoutDeliveryTime ? 'border-brand-blue/30 text-white' : 'border-charcoal-600 text-slate-400'}`}
                         value={checkoutDeliveryTime}
                         onChange={(e) => setCheckoutDeliveryTime(e.target.value)}
                         style={{ colorScheme: 'dark' }}
                       >
-                        <option value="" className="text-slate-400 bg-charcoal-900">* Select Time (required)</option>
+                        <option value="" className="text-slate-400 bg-charcoal-900">-- Select Time (optional) --</option>
                         {deliveryTimes.map(dt => <option key={dt} value={dt} className="text-white bg-charcoal-900">{dt}</option>)}
                       </select>
                     </div>
@@ -1259,14 +1262,33 @@ function POSHome() {
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-black uppercase tracking-widest text-brand-blue mb-1.5">Order Type</label>
-                  <select
-                    value={editFields.orderType}
-                    onChange={e => setEditFields(prev => ({ ...prev, orderType: e.target.value }))}
-                    className="w-full px-4 py-3 bg-charcoal-800 border border-charcoal-700 focus:border-brand-blue rounded-xl text-sm font-bold text-white outline-none transition-colors appearance-none cursor-pointer"
-                  >
-                    {['Walk-in (Pickup)', 'Walk-in (Delivery)', 'Regular (Pickup)', 'Regular (Delivery)', 'New Customer (Pickup)', 'New Customer (Delivery)'].map(o => <option key={o} value={o}>{o}</option>)}
-                  </select>
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-brand-blue mb-1.5">Fulfillment</label>
+                  <div className="flex gap-2 h-[46px]">
+                    {(['Pickup', 'Delivery'] as const).map(mode => {
+                      const isActive = editFields.orderType.toLowerCase().includes(mode.toLowerCase());
+                      return (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => {
+                            // Preserve the customer-type prefix (Walk-in / Regular / New Regular)
+                            const current = editFields.orderType;
+                            const prefix = current.replace(/\s*\((Pickup|Delivery)\)\s*/i, '').trim() || 'Regular';
+                            setEditFields(prev => ({ ...prev, orderType: `${prefix} (${mode})` }));
+                          }}
+                          className={`flex-1 rounded-xl text-xs font-black uppercase tracking-wider border transition-all ${
+                            isActive
+                              ? mode === 'Delivery'
+                                ? 'bg-brand-blue/20 border-brand-blue/60 text-brand-blue shadow-[0_0_8px_rgba(58,134,255,0.25)]'
+                                : 'bg-brand-teal/20 border-brand-teal/60 text-brand-teal'
+                              : 'bg-charcoal-800 border-charcoal-600 text-slate-400 hover:border-slate-500'
+                          }`}
+                        >
+                          {mode === 'Pickup' ? '🏪 Pickup' : '🚚 Delivery'}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 
@@ -1289,12 +1311,20 @@ function POSHome() {
                       onChange={e => setEditFields(prev => ({ ...prev, deliveryTime: e.target.value }))}
                       className="w-full px-4 py-3 bg-charcoal-800 border border-brand-violet/30 focus:border-brand-violet rounded-xl text-sm font-bold text-white outline-none transition-colors appearance-none cursor-pointer"
                     >
-                      <option value="">* Select Time (required)</option>
+                      <option value="">-- Select Time (optional) --</option>
                       {deliveryTimes.map(dt => <option key={dt} value={dt}>{dt}</option>)}
                     </select>
                   </div>
                 </div>
               )}
+
+
+              <div className="bg-black/20 p-5 rounded-xl border border-white/5 mt-6">
+                <p className="block text-[10px] font-black uppercase tracking-widest text-brand-yellow mb-3">⚠️ System Audit Authentication</p>
+                <input type="password" value={editPin} onChange={e => setEditPin(e.target.value)}
+                  placeholder="● ● ● ● ● ●" maxLength={6}
+                  className="w-full px-4 py-3 bg-charcoal-800 text-center text-2xl tracking-[0.6em] border border-brand-yellow/20 focus:border-brand-yellow/50 rounded-xl font-bold text-white outline-none transition-colors" />
+              </div>
             </div>
 
             <div className="flex gap-3 justify-end mt-8">

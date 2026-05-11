@@ -45,7 +45,7 @@ export default function Sidebar() {
                 })}
             </nav>
 
-            <div className="p-6 border-t border-border mt-auto">
+            <div className="p-6 border-t border-border mt-auto flex flex-col gap-3">
                 <div className="bg-secondary/50 rounded-xl p-4 border border-border/50">
                     <p className="text-xs text-muted-foreground mb-1">Status</p>
                     <div className="flex items-center gap-2">
@@ -53,6 +53,18 @@ export default function Sidebar() {
                         <span className="text-sm font-medium">System Online</span>
                     </div>
                 </div>
+                
+                <button 
+                    onClick={() => {
+                        localStorage.removeItem('loggedInUser');
+                        localStorage.removeItem('staffName');
+                        localStorage.removeItem('login_timestamp');
+                        window.location.reload();
+                    }}
+                    className="w-full py-2.5 rounded-xl border border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/20 hover:text-red-300 text-xs font-bold uppercase tracking-widest transition-colors flex items-center justify-center gap-2"
+                >
+                    <span className="text-base">⎋</span> Switch User
+                </button>
             </div>
         </aside>
     );

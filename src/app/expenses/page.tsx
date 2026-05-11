@@ -176,6 +176,7 @@ export default function ExpensesPage() {
       const res = await fetch('/api/sheet', { method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({
           action: 'ADD_EXPENSE', staffName: newExpense.staffName || 'Admin',
+          loggedInUser: localStorage.getItem('loggedInUser') || 'Admin',
           description: newExpense.description, amount: parseFloat(newExpense.amount),
           date: new Date().toLocaleDateString('en-PH', { timeZone:'Asia/Manila' })
         }) });
@@ -198,7 +199,8 @@ export default function ExpensesPage() {
       const res = await fetch('/api/sheet', { method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({
           action:'UPDATE_EXPENSE', rowIndex:editTarget.rowIndex, isCOGS:editTarget.isCOGS,
-          description:editVals.description, amount:parseFloat(editVals.amount), staffName:editVals.staffName
+          description:editVals.description, amount:parseFloat(editVals.amount), staffName:editVals.staffName,
+          loggedInUser: localStorage.getItem('loggedInUser') || 'Admin'
         })});
       if (res.ok) { setEditTarget(null); await fetchData(); }
       else { const err = await res.json().catch(()=>({})); alert('Failed: '+(err.error||'Unknown')); }
@@ -210,7 +212,7 @@ export default function ExpensesPage() {
     setDeleting(true);
     try {
       const res = await fetch('/api/sheet', { method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ action:'DELETE_EXPENSE', rowIndex:deleteTarget.rowIndex, isCOGS:deleteTarget.isCOGS })});
+        body: JSON.stringify({ action:'DELETE_EXPENSE', rowIndex:deleteTarget.rowIndex, isCOGS:deleteTarget.isCOGS, loggedInUser: localStorage.getItem('loggedInUser') || 'Admin' })});
       if (res.ok) { setDeleteTarget(null); await fetchData(); }
       else { alert('Failed to delete'); }
     } finally { setDeleting(false); }

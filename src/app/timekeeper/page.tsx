@@ -34,6 +34,7 @@ export default function StaffPage() {
     const [newStaffName, setNewStaffName] = useState('');
     const [newStaffRole, setNewStaffRole] = useState('');
     const [newStaffPay, setNewStaffPay] = useState('');
+    const [editingStaff, setEditingStaff] = useState<{ oldName: string; name: string; role: string; basePay: string } | null>(null);
     const [managingStaffLoading, setManagingStaffLoading] = useState(false);
 
     useEffect(() => {
@@ -88,15 +89,18 @@ export default function StaffPage() {
     function parseClockDateTime(dateStr: string, timeStr: string): Date | null {
         if (!dateStr && !timeStr) return null;
         try {
+            const cleanDate = (dateStr || '').replace(/^'/, '');
+            const cleanTime = (timeStr || '').replace(/^'/, '');
+
             // Parse date part: expects YYYY-MM-DD
-            const dateParts = (dateStr || '').split('-');
+            const dateParts = cleanDate.split('-');
             const year  = parseInt(dateParts[0] || '0', 10);
             const month = parseInt(dateParts[1] || '1', 10) - 1;
             const day   = parseInt(dateParts[2] || '1', 10);
 
             // Parse time part: expects "HH:MM AM" or "HH:MM PM"
             let hours = 0, minutes = 0;
-            const timeMatch = (timeStr || '').match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+            const timeMatch = cleanTime.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
             if (timeMatch) {
                 hours   = parseInt(timeMatch[1], 10);
                 minutes = parseInt(timeMatch[2], 10);
@@ -105,7 +109,7 @@ export default function StaffPage() {
                 if (!isPM && hours === 12) hours = 0;
             }
 
-            if (year < 2000) return null; // sanity check
+            if (year < 2000 || isNaN(year)) return null; // sanity check
             return new Date(year, month, day, hours, minutes, 0);
         } catch { return null; }
     }
@@ -121,7 +125,10 @@ export default function StaffPage() {
             if (action === 'CLOCK_IN') { body.role = employee?.role || ''; body.basePay = employee?.basePay || 0; }
             const res = await fetch('/api/sheet', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
             if (res.ok) { await fetchStaffData(); }
-            else { alert('Failed to update status.'); }
+            else { 
+                const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+                alert('Failed to update status: ' + err.error); 
+            }
         } catch (e) { console.error(e); }
         finally { setProcessing(null); }
     };
@@ -220,6 +227,24 @@ export default function StaffPage() {
                 alert('Remove Employee failed: ' + err.error);
             }
         } catch (e) { console.error(e); alert('Error removing employee.'); }
+        finally { setManagingStaffLoading(false); }
+    };
+
+    const handleEditEmployee = async () => {
+        if (!editingStaff || !editingStaff.name || !editingStaff.role || !editingStaff.basePay || managingStaffLoading) return;
+        setManagingStaffLoading(true);
+        try {
+            const body = { action: 'EDIT_EMPLOYEE', oldStaffName: editingStaff.oldName, newStaffName: editingStaff.name, role: editingStaff.role, basePay: editingStaff.basePay };
+            const res = await fetch('/api/sheet', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            if (res.ok) {
+                await fetchStaffData();
+                setEditingStaff(null);
+                alert(`Successfully updated ${editingStaff.name}.`);
+            } else {
+                const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+                alert('Edit Employee failed: ' + err.error);
+            }
+        } catch (e) { console.error(e); alert('Error editing employee.'); }
         finally { setManagingStaffLoading(false); }
     };
 
@@ -657,15 +682,37 @@ export default function StaffPage() {
                         <div className="overflow-y-auto px-6 pb-6 flex-1 space-y-2">
                             <p className="text-xs font-black text-slate-500 uppercase tracking-wider mb-3">Current Employees ({employees.length})</p>
                             {employees.map(emp => (
-                                <div key={emp.name} className="flex items-center justify-between px-4 py-3 rounded-xl bg-charcoal-900 border border-charcoal-700 hover:border-charcoal-600 transition-colors">
-                                    <div>
-                                        <div className="text-sm font-bold text-white">{emp.name}</div>
-                                        <div className="text-[11px] text-slate-500 font-semibold">{emp.role} · ₱{emp.basePay} / shift</div>
-                                    </div>
-                                    <button onClick={() => handleRemoveEmployee(emp.name)} disabled={managingStaffLoading}
-                                        className="px-3 py-1.5 rounded-lg text-[11px] font-black bg-brand-orange/10 border border-brand-orange/25 text-brand-orange hover:bg-brand-orange/20 transition-all disabled:opacity-40">
-                                        Remove
-                                    </button>
+                                <div key={emp.name} className="flex flex-col gap-2 px-4 py-3 rounded-xl bg-charcoal-900 border border-charcoal-700 hover:border-charcoal-600 transition-colors">
+                                    {editingStaff?.oldName === emp.name ? (
+                                        <>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <input value={editingStaff.name} onChange={e => setEditingStaff({ ...editingStaff, name: e.target.value })} className="px-2 py-1.5 rounded-lg text-xs font-semibold text-white bg-charcoal-800 border border-charcoal-700 focus:border-brand-blue outline-none" placeholder="Name" />
+                                                <input value={editingStaff.role} onChange={e => setEditingStaff({ ...editingStaff, role: e.target.value })} className="px-2 py-1.5 rounded-lg text-xs font-semibold text-white bg-charcoal-800 border border-charcoal-700 focus:border-brand-blue outline-none" placeholder="Role" />
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <input type="number" value={editingStaff.basePay} onChange={e => setEditingStaff({ ...editingStaff, basePay: e.target.value })} className="flex-1 px-2 py-1.5 rounded-lg text-xs font-semibold text-white bg-charcoal-800 border border-charcoal-700 focus:border-brand-blue outline-none" placeholder="Base Pay" />
+                                                <button onClick={handleEditEmployee} disabled={managingStaffLoading} className="px-3 py-1.5 rounded-lg text-[11px] font-black bg-brand-teal/10 text-brand-teal hover:bg-brand-teal/20 transition-all">Save</button>
+                                                <button onClick={() => setEditingStaff(null)} disabled={managingStaffLoading} className="px-3 py-1.5 rounded-lg text-[11px] font-black bg-charcoal-700 text-slate-400 hover:text-white transition-all">Cancel</button>
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <div className="flex items-center justify-between">
+                                            <div>
+                                                <div className="text-sm font-bold text-white">{emp.name}</div>
+                                                <div className="text-[11px] text-slate-500 font-semibold">{emp.role} · ₱{emp.basePay} / shift</div>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <button onClick={() => setEditingStaff({ oldName: emp.name, name: emp.name, role: emp.role, basePay: emp.basePay.toString() })} disabled={managingStaffLoading}
+                                                    className="px-3 py-1.5 rounded-lg text-[11px] font-black bg-brand-blue/10 border border-brand-blue/25 text-brand-blue hover:bg-brand-blue/20 transition-all disabled:opacity-40">
+                                                    Edit
+                                                </button>
+                                                <button onClick={() => handleRemoveEmployee(emp.name)} disabled={managingStaffLoading}
+                                                    className="px-3 py-1.5 rounded-lg text-[11px] font-black bg-brand-orange/10 border border-brand-orange/25 text-brand-orange hover:bg-brand-orange/20 transition-all disabled:opacity-40">
+                                                    Remove
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             ))}
                             {employees.length === 0 && (

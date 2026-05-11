@@ -242,40 +242,36 @@ export async function GET(request: Request) {
 
 
         if (tab === 'staff' || tab === 'timekeeper') {
-            const employeeSheet = doc.sheetsByTitle['Employee'];
+            // Try Employee sheet first — that's where PINs live in this workbook
+            const employeeSheet = 
+                doc.sheetsByTitle['Employee'] ||
+                doc.sheetsByTitle['employee'] ||
+                doc.sheetsByTitle['Employees'] ||
+                doc.sheetsByTitle['Staff'] ||
+                doc.sheetsByTitle['staff'] ||
+                doc.sheetsByIndex.find(s => /^(staff|employee)$/i.test(s.title));
             const staffHubSheet = doc.sheetsByTitle['Staff_&_Commission_Hub'];
 
             if (!employeeSheet || !staffHubSheet) {
-                return NextResponse.json({ error: 'Required sheets (Employee or Staff_&_Commission_Hub) not found.' }, { status: 500 });
+                return NextResponse.json({ error: 'Required sheets (Employee/Staff or Staff_&_Commission_Hub) not found.' }, { status: 500 });
             }
 
-            // Fetch Employees
-            await employeeSheet.loadCells(`A1:J${LIMIT_EMPLOYEE}`);
-
-            // Find column indices based on headers
-            let nameCol = 0;
-            let roleCol = 3;
-            let salaryCol = 4;
-
-            for (let c = 0; c < 10; c++) {
-                const header = employeeSheet.getCell(0, c).value?.toString().toLowerCase() || '';
-                if (header.includes('name')) nameCol = c;
-                if (header.includes('role') || header.includes('position')) roleCol = c;
-                if (header.includes('salary') || header.includes('base pay') || header.includes('rate')) salaryCol = c;
-            }
-
-            console.log(`[API] Employee Headers Detected: Name=${nameCol}, Role=${roleCol}, Salary=${salaryCol}`);
-
+            // Use getRows() which maps headers → values automatically, avoiding column index bugs
+            const rawRows = await employeeSheet.getRows();
             const employees = [];
-            for (let i = 1; i < LIMIT_EMPLOYEE; i++) {
-                const name = employeeSheet.getCell(i, nameCol).value;
-                if (!name) break; // Stop at first empty row
-                const role = employeeSheet.getCell(i, roleCol).value;
-                const salary = employeeSheet.getCell(i, salaryCol).value;
+            for (const row of rawRows) {
+                // Try multiple possible header names for the staff name column
+                const name = row.get('Staff') || row.get('Name') || row.get('staff') || row.get('name');
+                if (!name || !name.toString().trim()) continue;
+                const pin = row.get('PIN') || row.get('Pin') || row.get('pin') || row.get('Password') || '';
+                const role = row.get('Role') || row.get('Position') || row.get('role') || '';
+                const salary = row.get('Salary') || row.get('Base Pay') || row.get('salary') || row.get('Hourly') || '0';
+                console.log(`[API] Staff: name="${name}", pin="${pin}" (${typeof pin})`);
                 employees.push({
-                    name: name.toString(),
-                    role: role ? role.toString() : '',
-                    basePay: typeof salary === 'number' ? salary : parseFloat(salary?.toString() || '0') || 0
+                    name: name.toString().trim(),
+                    role: role.toString().trim(),
+                    basePay: typeof salary === 'number' ? salary : parseFloat(salary?.toString() || '0') || 0,
+                    pin: pin !== null && pin !== undefined ? pin.toString().trim() : ''
                 });
             }
 
@@ -425,7 +421,8 @@ export async function GET(request: Request) {
                 expectedYield: row.get('Expected_Yield_KG'),
                 variance: row.get('Variance_%'),
                 elecCost: row.get('Elec_Cost'),
-                staffName: row.get('Staff')
+                staffName: row.get('Staff'),
+                auditLog: row.get('Audit Log')
             })).reverse();
 
             return NextResponse.json({ productionHistory });
@@ -1188,7 +1185,7 @@ export async function GET(request: Request) {
                 customers.push({
                     id: `cust-${rawCid || i}`, // Composite ID for internal use
                     cid: rawCid,               // Raw CID from column A
-                    name: nameCell.value.toString(),
+                    name: nameCell.value.toString().trim(),
                     details: details,
                     standardOrderItems: custItems
                 });
@@ -1201,10 +1198,10 @@ export async function GET(request: Request) {
             }
         }
 
-        // Read Employees - robustly search all sheets for a name containing "Employee" or "Staff"
+        // Read Employees - robustly search all sheets for a name exactly matching "Employee" or "Staff"
         const employeesSheet = doc.sheetsByIndex.find(s =>
-            s.title.toLowerCase().includes('employee') ||
-            s.title.toLowerCase().includes('staff')
+            s.title.toLowerCase() === 'employee' ||
+            s.title.toLowerCase() === 'staff'
         );
         let employees: string[] = [];
         if (employeesSheet) {
@@ -1242,14 +1239,14 @@ export async function POST(request: Request) {
         const customersSheet = doc.sheetsByTitle['Customers'];
         const productionSheet = doc.sheetsByTitle['Production'];
         const posControlSheet = doc.sheetsByTitle['POS_System_Control'];
-        const employeeSheet = doc.sheetsByTitle['Employee'];
+        const employeeSheet = doc.sheetsByIndex.find(s => s.title.toLowerCase() === 'employee' || s.title.toLowerCase() === 'staff');
         const staffHubSheet = doc.sheetsByTitle['Staff_&_Commission_Hub'];
 
         if (!posControlSheet) return NextResponse.json({ error: 'POS Control sheet not found' }, { status: 500 });
 
         if (action === 'LOG_PRODUCTION') {
             if (!productionSheet) return NextResponse.json({ error: 'Production sheet not found' }, { status: 500 });
-            const { log } = body;
+            const { log, loggedInUser } = body;
 
             const rowValues = {
                 'Log_Date': log.date,
@@ -1268,7 +1265,8 @@ export async function POST(request: Request) {
                 'Variance_KG': parseFloat((parseFloat(log.totalWeight) - parseFloat(log.expectedYield)).toFixed(2)),
                 'Variance_%': log.variance,
                 'Elec_Cost': parseFloat(log.elecCost),
-                'Staff': log.staffName || 'Admin'
+                'Staff': log.staffName || 'Admin',
+                'Audit Log': `Added by ${loggedInUser || 'Unknown'} at ${getPHTime()}`
             };
 
             await productionSheet.addRow(rowValues);
@@ -1367,6 +1365,37 @@ export async function POST(request: Request) {
             return NextResponse.json({ success: true });
         }
 
+        if (action === 'EDIT_EMPLOYEE') {
+            if (!employeeSheet) return NextResponse.json({ error: 'Employee sheet not found' }, { status: 500 });
+
+            const { oldStaffName, newStaffName, role, basePay } = body;
+            await employeeSheet.loadCells(`A1:J${LIMIT_EMPLOYEE}`);
+
+            let nameCol = 0, roleCol = 3, salaryCol = 4;
+            for (let c = 0; c < 10; c++) {
+                const h = (employeeSheet.getCell(0, c).value?.toString() || '').toLowerCase();
+                if (h.includes('name')) nameCol = c;
+                if (h.includes('role') || h.includes('position')) roleCol = c;
+                if (h.includes('salary') || h.includes('base pay') || h.includes('rate')) salaryCol = c;
+            }
+
+            let found = false;
+            for (let r = 1; r < LIMIT_EMPLOYEE; r++) {
+                if (employeeSheet.getCell(r, nameCol).value?.toString() === oldStaffName) {
+                    employeeSheet.getCell(r, nameCol).value = newStaffName;
+                    employeeSheet.getCell(r, roleCol).value = role;
+                    employeeSheet.getCell(r, salaryCol).value = Number(basePay) || 0;
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found) return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
+
+            await employeeSheet.saveUpdatedCells();
+            return NextResponse.json({ success: true });
+        }
+
         if (action === 'CLOCK_IN') {
             if (!staffHubSheet) return NextResponse.json({ error: 'Staff Hub sheet not found' }, { status: 500 });
             const { staffName, role, basePay } = body;
@@ -1385,7 +1414,7 @@ export async function POST(request: Request) {
 
             await staffHubSheet.loadHeaderRow();
             const staffRowCount = Math.min(staffHubSheet.rowCount, LIMIT_STAFF_HUB);
-            await staffHubSheet.loadCells(`A1:N${staffRowCount + 10}`);
+            await staffHubSheet.loadCells(`A1:N${Math.min(staffRowCount + 10, staffHubSheet.rowCount)}`);
             
             // Find the true end of the dataset by searching backwards
             let lastDataRow = 0;
@@ -1434,7 +1463,8 @@ export async function POST(request: Request) {
 
             // Helper: parse "HH:MM AM/PM" → decimal hours since midnight
             const parseTime12hr = (t: string): number => {
-                const m = (t || '').match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+                const cleanT = (t || '').toString().replace(/^'/, '');
+                const m = cleanT.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
                 if (!m) return 0;
                 let h = parseInt(m[1], 10);
                 const min = parseInt(m[2], 10);
@@ -1445,7 +1475,8 @@ export async function POST(request: Request) {
 
             // Helper: parse "YYYY-MM-DD" → day serial relative to 1899-12-30 (for cross-day calc)
             const parseDateDays = (d: string): number => {
-                const parts = (d || '').split('-');
+                const cleanD = (d || '').toString().replace(/^'/, '');
+                const parts = cleanD.split('-');
                 if (parts.length < 3) return 0;
                 const dt = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
                 return dt.getTime() / (24 * 3600 * 1000);
@@ -1600,8 +1631,8 @@ export async function POST(request: Request) {
                 // Recalculate hours server-side (text cells can't use arithmetic formula)
                 const outTimeStr = overrideLogoutTime ? formatTime12hr(overrideLogoutTime) : staffHubSheet.getCell(targetRowIndex, 4).value?.toString() || '';
                 const outDateStr = overrideLogoutDate || staffHubSheet.getCell(targetRowIndex, 5).value?.toString() || '';
-                const parseT = (t: string) => { const m = (t||'').match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i); if(!m) return 0; let h=parseInt(m[1]); const min=parseInt(m[2]); if(m[3].toUpperCase()==='PM'&&h!==12) h+=12; if(m[3].toUpperCase()==='AM'&&h===12) h=0; return h+min/60; };
-                const parseD = (d: string) => { const p=(d||'').split('-'); if(p.length<3) return 0; return new Date(+p[0],+p[1]-1,+p[2]).getTime()/(24*3600*1000); };
+                const parseT = (t: string) => { const cleanT = (t||'').toString().replace(/^'/, ''); const m = cleanT.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i); if(!m) return 0; let h=parseInt(m[1]); const min=parseInt(m[2]); if(m[3].toUpperCase()==='PM'&&h!==12) h+=12; if(m[3].toUpperCase()==='AM'&&h===12) h=0; return h+min/60; };
+                const parseD = (d: string) => { const cleanD = (d||'').toString().replace(/^'/, ''); const p=cleanD.split('-'); if(p.length<3) return 0; return new Date(+p[0],+p[1]-1,+p[2]).getTime()/(24*3600*1000); };
                 let hrs = 0;
                 if (loginTimeStr && loginDateStr && loginDateStr.includes('-') && outDateStr.includes('-')) {
                     hrs = Math.max(0, (parseD(outDateStr) + parseT(outTimeStr)/24 - parseD(loginDateStr) - parseT(loginTimeStr)/24) * 24);
@@ -1618,7 +1649,7 @@ export async function POST(request: Request) {
             if (auditParts.length > 0) {
                 const existingNote = staffHubSheet.getCell(targetRowIndex, 13).value?.toString() || '';
                 const stamp = `[OVERRIDE ${getPHTime()}] ` + auditParts.join(', ');
-                staffHubSheet.getCell(targetRowIndex, 13).value = existingNote ? existingNote + ' | ' + stamp : stamp;
+                staffHubSheet.getCell(targetRowIndex, 13).value = existingNote ? existingNote + '\n' + stamp : stamp;
             }
  
             await staffHubSheet.saveUpdatedCells();
@@ -1665,6 +1696,7 @@ export async function POST(request: Request) {
             const qtyIdx = getIdx('Quantity', 5);
             const unitIdx = getIdx('Unit_Price', 6);
             const totalIdx = getIdx('Total_Price', 7);
+            const commIdx = getIdx('Commission_Earned', 11);
             const auditIdx = getIdx('Audit Log', 16);
             const auditTsIdx = getIdx('Audit_Log_Timestamp', 17);
 
@@ -1684,11 +1716,24 @@ export async function POST(request: Request) {
             if (updates.deliveryDate !== undefined) salesSheet.getCell(targetRowIdx, getIdx('Unplanned_Delivery_Date', 13)).value = updates.deliveryDate;
             if (updates.deliveryTime !== undefined) salesSheet.getCell(targetRowIdx, getIdx('Unplanned_Delivery_Time', 14)).value = updates.deliveryTime;
 
+            // Recalculate commission if orderType or quantity changed
+            if (updates.orderType !== undefined || updates.quantity !== undefined) {
+                const effectiveOrderType = updates.orderType !== undefined
+                    ? updates.orderType
+                    : (salesSheet.getCell(targetRowIdx, getIdx('Order_Type', 8)).value?.toString() || '');
+                const effectiveItemName = updates.itemName !== undefined
+                    ? updates.itemName
+                    : (salesSheet.getCell(targetRowIdx, getIdx('Item_Name', 4)).value?.toString() || '');
+                const commRules = await fetchCommissionRules(doc);
+                const newCommission = calculateCommission(effectiveItemName, newQty, effectiveOrderType, commRules);
+                salesSheet.getCell(targetRowIdx, commIdx).value = newCommission;
+            }
+
             // Audit
             const phTime = getPHTime();
             const changeLog = `Edited by ${staffName || 'Unknown'} at ${phTime}`;
             const currentLog = salesSheet.getCell(targetRowIdx, auditIdx).value?.toString() || '';
-            salesSheet.getCell(targetRowIdx, auditIdx).value = currentLog ? `${currentLog} | ${changeLog}` : changeLog;
+            salesSheet.getCell(targetRowIdx, auditIdx).value = currentLog ? `${currentLog}\n${changeLog}` : changeLog;
             salesSheet.getCell(targetRowIdx, auditTsIdx).value = phTime;
 
             await salesSheet.saveUpdatedCells();
@@ -1743,7 +1788,7 @@ export async function POST(request: Request) {
             // Update cells
             salesSheet.getCell(targetRowIdx, payIdx).value = newStatus;
             const currentLog = salesSheet.getCell(targetRowIdx, auditIdx).value?.toString() || '';
-            salesSheet.getCell(targetRowIdx, auditIdx).value = currentLog ? `${currentLog} | ${auditNote}` : auditNote;
+            salesSheet.getCell(targetRowIdx, auditIdx).value = currentLog ? `${currentLog}\n${auditNote}` : auditNote;
             salesSheet.getCell(targetRowIdx, auditTsIdx).value = phTime;
 
             await salesSheet.saveUpdatedCells();
@@ -1751,10 +1796,10 @@ export async function POST(request: Request) {
         }
 
         if (action === 'UPDATE_PRODUCTION_ROW') {
-            const { date, startTime, updates } = body;
+            const { date, startTime, updates, loggedInUser } = body;
             const prodSheet = doc.sheetsByTitle['Production'];
             if (!prodSheet) return NextResponse.json({ error: 'Production sheet not found' }, { status: 500 });
-            await prodSheet.loadCells(`A1:Q${LIMIT_PRODUCTION}`);
+            await prodSheet.loadCells(`A1:S${LIMIT_PRODUCTION}`);
             const rows = await prodSheet.getRows();
             let updated = false;
             for (let ri = 0; ri < rows.length; ri++) {
@@ -1771,6 +1816,12 @@ export async function POST(request: Request) {
                     if (updates.units_45KG !== undefined) prodSheet.getCell(sheetRow, 10).value = updates.units_45KG;
                     if (updates.totalWeight !== undefined) prodSheet.getCell(sheetRow, 11).value = updates.totalWeight;
                     if (updates.staffName !== undefined) prodSheet.getCell(sheetRow, 16).value = updates.staffName;
+                    
+                    const phTime = getPHTime();
+                    const changeLog = `Edited by ${loggedInUser || 'Unknown'} at ${phTime}`;
+                    const currentLog = prodSheet.getCell(sheetRow, 17).value?.toString() || '';
+                    prodSheet.getCell(sheetRow, 17).value = currentLog ? `${currentLog} | ${changeLog}` : changeLog;
+
                     updated = true;
                     break;
                 }
@@ -1806,12 +1857,12 @@ export async function POST(request: Request) {
         if (action === 'GET_EXPENSES') { return NextResponse.json({ error: 'Deprecated. Use GET ?tab=expenses' }, { status: 400 }); }
 
         if (action === 'ADD_EXPENSE' || action === 'LOG_EXPENSE') {
-            const { staffName, description, amount, date } = body;
+            const { staffName, description, amount, date, loggedInUser } = body;
             const expSheet = doc.sheetsByTitle['Expenses'];
             if (!expSheet) return NextResponse.json({ error: 'Expenses sheet not found' }, { status: 500 });
             
             const maxRows = Math.max(expSheet.rowCount, 50);
-            await expSheet.loadCells(`A1:M${maxRows + 50}`);
+            await expSheet.loadCells(`A1:O${maxRows + 50}`);
             
             let isCogs = false;
             for (let i = 1; i < maxRows; i++) {
@@ -1834,40 +1885,52 @@ export async function POST(request: Request) {
             expSheet.getCell(targetRow, colOffset + 1).value = staffName || (action === 'LOG_EXPENSE' ? 'Staff' : 'Admin (Dashboard)');
             expSheet.getCell(targetRow, colOffset + 2).value = description;
             expSheet.getCell(targetRow, colOffset + 3).value = parseFloat(amount || '0');
+            const phTime = getPHTime();
+            expSheet.getCell(targetRow, colOffset + 4).value = `Added by ${loggedInUser || 'Unknown'} at ${phTime}`;
             await expSheet.saveUpdatedCells();
             return NextResponse.json({ success: true });
         }
 
         if (action === 'UPDATE_EXPENSE') {
-            const { rowIndex, description, amount, staffName, isCOGS } = body;
+            const { rowIndex, description, amount, staffName, isCOGS, loggedInUser } = body;
             if (rowIndex === undefined || rowIndex === null) return NextResponse.json({ error: 'Missing rowIndex' }, { status: 400 });
 
             const expSheet = doc.sheetsByTitle['Expenses'];
             if (!expSheet) return NextResponse.json({ error: 'Expenses sheet not found' }, { status: 500 });
-            await expSheet.loadCells(`A1:M${rowIndex + 10}`);
+            await expSheet.loadCells(`A1:O${rowIndex + 10}`);
 
             const colOffset = isCOGS ? 9 : 4;
             if (description !== undefined) expSheet.getCell(rowIndex, colOffset + 2).value = description;
             if (amount !== undefined) expSheet.getCell(rowIndex, colOffset + 3).value = parseFloat(String(amount));
             if (staffName !== undefined) expSheet.getCell(rowIndex, colOffset + 1).value = staffName;
+            
+            const phTime = getPHTime();
+            const changeLog = `Edited by ${loggedInUser || 'Unknown'} at ${phTime}`;
+            const currentLog = expSheet.getCell(rowIndex, colOffset + 4).value?.toString() || '';
+            expSheet.getCell(rowIndex, colOffset + 4).value = currentLog ? `${currentLog} | ${changeLog}` : changeLog;
+
             await expSheet.saveUpdatedCells();
             return NextResponse.json({ success: true });
         }
 
         if (action === 'DELETE_EXPENSE') {
-            const { rowIndex, isCOGS } = body;
+            const { rowIndex, isCOGS, loggedInUser } = body;
             if (rowIndex === undefined || rowIndex === null) return NextResponse.json({ error: 'Missing rowIndex' }, { status: 400 });
 
             const expSheet = doc.sheetsByTitle['Expenses'];
             if (!expSheet) return NextResponse.json({ error: 'Expenses sheet not found' }, { status: 500 });
-            await expSheet.loadCells(`A1:M${rowIndex + 10}`);
+            await expSheet.loadCells(`A1:O${rowIndex + 10}`);
 
             const colOffset = isCOGS ? 9 : 4;
-            // Clear the 4 cells for this record
-            expSheet.getCell(rowIndex, colOffset).value = null;
-            expSheet.getCell(rowIndex, colOffset + 1).value = null;
-            expSheet.getCell(rowIndex, colOffset + 2).value = null;
-            expSheet.getCell(rowIndex, colOffset + 3).value = null;
+            // Mark as VOIDED instead of clearing data to preserve audit trail
+            expSheet.getCell(rowIndex, colOffset + 2).value = 'VOIDED';
+            expSheet.getCell(rowIndex, colOffset + 3).value = 0;
+            
+            const phTime = getPHTime();
+            const changeLog = `Deleted by ${loggedInUser || 'Unknown'} at ${phTime}`;
+            const currentLog = expSheet.getCell(rowIndex, colOffset + 4).value?.toString() || '';
+            expSheet.getCell(rowIndex, colOffset + 4).value = currentLog ? `${currentLog} | ${changeLog}` : changeLog;
+
             await expSheet.saveUpdatedCells();
             return NextResponse.json({ success: true });
         }
@@ -2356,6 +2419,11 @@ export async function POST(request: Request) {
                         row.set('Commission_Earned', newComm);
                     }
 
+                    const phTime = getPHTime();
+                    const changeLog = `Delivery updated by ${body.loggedInUser || 'Unknown'} at ${phTime}`;
+                    const currentLog = row.get('Audit Log') || '';
+                    row.set('Audit Log', currentLog ? `${currentLog} | ${changeLog}` : changeLog);
+
                     await row.save();
                     updatedCount++;
                 }
@@ -2424,6 +2492,12 @@ export async function POST(request: Request) {
                     const newComm = calculateCommission(newItemName, newQty, effectiveOrderType, rules);
 
                     row.set('Commission_Earned', newComm);
+                    
+                    const phTime = getPHTime();
+                    const changeLog = `Delivery updated by ${body.loggedInUser || 'Unknown'} at ${phTime}`;
+                    const currentLog = row.get('Audit Log') || '';
+                    row.set('Audit Log', currentLog ? `${currentLog} | ${changeLog}` : changeLog);
+
                     await row.save();
                     updatedCount++;
                 }
@@ -2507,12 +2581,15 @@ export async function POST(request: Request) {
             let goto_sales = false;
 
             if (customerType === 'new' || action === 'REGISTER_CUSTOMER') {
-                await customersSheet.loadCells(`A1:B${LIMIT_CUSTOMERS}`);
+                // Cap to actual sheet size — sheet may have fewer rows than LIMIT_CUSTOMERS
+                const custRowCount = Math.min(LIMIT_CUSTOMERS, customersSheet.rowCount);
+                // Load all 13 columns (A:M) so we can both scan for duplicates AND write new rows
+                await customersSheet.loadCells(`A1:M${custRowCount}`);
                 let maxCid = 0;
                 let firstEmptyRow = 0;
                 const incomingName = (customerName || newCustomerDetails?.name || '').trim().toLowerCase();
 
-                for (let i = 1; i < LIMIT_CUSTOMERS; i++) {
+                for (let i = 1; i < custRowCount; i++) {
                     const cidCell = customersSheet.getCell(i, 0);
                     if (!cidCell.value) {
                         if (firstEmptyRow === 0) firstEmptyRow = i;
@@ -2531,11 +2608,16 @@ export async function POST(request: Request) {
                     if (!isNaN(num) && num > maxCid) maxCid = num;
                 }
                 
-                if (firstEmptyRow === 0) firstEmptyRow = LIMIT_CUSTOMERS; // fallback
+                if (firstEmptyRow === 0) {
+                    // Sheet is full — add 100 more rows so we can append
+                    await customersSheet.resize({ rowCount: custRowCount + 100, columnCount: customersSheet.columnCount });
+                    await customersSheet.loadCells(`A${custRowCount + 1}:M${custRowCount + 100}`);
+                    firstEmptyRow = custRowCount; // first new empty row (0-indexed = old rowCount)
+                }
 
                 if (!goto_sales) {
                     assignedCid = (maxCid + 1).toString();
-                    await customersSheet.loadCells(`A${firstEmptyRow + 1}:M${firstEmptyRow + 1}`);
+                    // Cells already loaded — no separate loadCells needed
                     const newRowCells = [
                         assignedCid,
                         customerName || newCustomerDetails?.name || '',
@@ -2567,8 +2649,11 @@ export async function POST(request: Request) {
             const timestamp = getPHTime();
 
             let finalOrderType = customerType === 'new' ? 'New Regular' : (customerType === 'regular' ? 'Regular' : 'Walk-in');
-            if (deliveryDate && deliveryTime) finalOrderType += ` (Delivery)`;
-            else if (deliveryTime === 'Pickup') finalOrderType += ` (Pickup)`;
+            // Delivery is signaled by a deliveryDate being provided (time is optional)
+            // When Pickup is selected the frontend sends deliveryTime='Pickup' and no deliveryDate
+            const isDelivery = !!deliveryDate || (deliveryTime && deliveryTime !== 'Pickup');
+            if (isDelivery) finalOrderType += ` (Delivery)`;
+            else finalOrderType += ` (Pickup)`;
 
             // SECURE PRICING: Load prices from POS_System_Control instead of trusting frontend
             await posControlSheet.loadCells('A1:B30');
