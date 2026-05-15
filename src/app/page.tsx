@@ -550,10 +550,10 @@ function POSHome() {
   const todayUnits = todaySales.reduce((s, t) => s + (parseFloat(t.quantity) || 0), 0);
   const todayPaid = todaySales.filter(t => t.paymentMethod === 'Paid').length;
   const todayCredit = todaySales.filter(t => t.paymentMethod !== 'Paid').length;
-
   return (
     <div className="w-full space-y-6">
-
+      {/* Changes background to Blue ONLY for the Driver Link */}
+      {process.env.NEXT_PUBLIC_APP_MODE === 'DRIVER' && <style>{`body { background-color: #1e3a8a !important; }`}</style>}
       {/* ── Page Header ── */}
       <div className="flex flex-wrap justify-between items-center gap-4">
         <div className="flex items-center gap-3">
