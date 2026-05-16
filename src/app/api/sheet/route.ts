@@ -134,19 +134,19 @@ export function getPHTime(): string {
 const SHEET_ID = process.env.GOOGLE_SHEET_ID!;
 const CLIENT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL!;
 
-// Indestructible Key Parser: Automatically detects Base64 vs Plain Text
-let rawKey = process.env.GOOGLE_PRIVATE_KEY || '';
-let PRIVATE_KEY = '';
-
-if (!rawKey.includes('-----BEGIN PRIVATE KEY-----')) {
-    // If it doesn't contain the PEM header, it MUST be our Base64 string!
-    // This cleans up any hidden wrapping quotes, spaces, or server-side artifacts
-    let cleanB64 = rawKey.replace(/[^a-zA-Z0-9+/=]/g, '');
-    PRIVATE_KEY = Buffer.from(cleanB64, 'base64').toString('utf8');
-} else {
-    // It is the plain text key (flattened or quoted)
-    PRIVATE_KEY = rawKey.replace(/\\n/g, '\n').replace(/"/g, '').trim();
-}
+137: // Indestructible Key Parser: Automatically detects Base64 vs Plain Text
+138: let rawKey = process.env.GOOGLE_PRIVATE_KEY || '';
+139: let PRIVATE_KEY = '';
+140: 
+141: if (!rawKey.includes('-----BEGIN PRIVATE KEY-----')) {
+142:     // If it doesn't contain the PEM header, it MUST be our Base64 string!
+143:     // This cleans up any hidden wrapping quotes, spaces, or server-side artifacts
+144:     let cleanB64 = rawKey.replace(/[^a-zA-Z0-9+/=]/g, '');
+145:     PRIVATE_KEY = Buffer.from(cleanB64, 'base64').toString('utf8');
+146: } else {
+147:     // It is the plain text key (flattened or quoted)
+148:     PRIVATE_KEY = rawKey.replace(/\\n/g, '\n').replace(/"/g, '').trim();
+149: }
 
 const serviceAccountAuth = new JWT({
     email: CLIENT_EMAIL,
