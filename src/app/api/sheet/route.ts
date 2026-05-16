@@ -134,16 +134,17 @@ export function getPHTime(): string {
 const SHEET_ID = process.env.GOOGLE_SHEET_ID!;
 const CLIENT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL!;
 
-// Indestructible Key Parser: Handles Base64, Quoted, and Flattened text automatically
+// Indestructible Key Parser: Automatically strips wrapping quotes and handles Base64/Plain text
 let rawKey = process.env.GOOGLE_PRIVATE_KEY || '';
+let cleanKey = rawKey.replace(/^["']|["']$/g, '').trim(); // Strips hidden wrapping quotes
 let PRIVATE_KEY = '';
 
-if (rawKey.startsWith('LS0tLS1')) {
+if (cleanKey.startsWith('LS0tLS1')) {
     // It is Base64 encoded
-    PRIVATE_KEY = Buffer.from(rawKey, 'base64').toString('utf8');
+    PRIVATE_KEY = Buffer.from(cleanKey, 'base64').toString('utf8');
 } else {
     // It is plain text (flattened or quoted)
-    PRIVATE_KEY = rawKey.replace(/\\n/g, '\n').replace(/"/g, '').trim();
+    PRIVATE_KEY = cleanKey.replace(/\\n/g, '\n');
 }
 
 const serviceAccountAuth = new JWT({
