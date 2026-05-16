@@ -263,7 +263,8 @@ export async function GET(request: Request) {
                 // Try multiple possible header names for the staff name column
                 const name = row.get('Staff') || row.get('Name') || row.get('staff') || row.get('name');
                 if (!name || !name.toString().trim()) continue;
-                const pin = row.get('PIN') || row.get('Pin') || row.get('pin') || row.get('Password') || '';
+              // Force reading from Column G (index 6) to bypass header name mismatch issues
+const pin = row.get('PIN') || row.get('Pin') || row.get('pin') || row.get('Password') || row._rawData[6] || '';
                 const role = row.get('Role') || row.get('Position') || row.get('role') || '';
                 const salary = row.get('Salary') || row.get('Base Pay') || row.get('salary') || row.get('Hourly') || '0';
                 console.log(`[API] Staff: name="${name}", pin="${pin}" (${typeof pin})`);
