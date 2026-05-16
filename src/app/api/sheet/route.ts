@@ -134,19 +134,22 @@ export function getPHTime(): string {
 const SHEET_ID = process.env.GOOGLE_SHEET_ID!;
 const CLIENT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL!;
 
-137: // Indestructible Key Parser: Automatically detects Base64 vs Plain Text
-138: let rawKey = process.env.GOOGLE_PRIVATE_KEY || '';
-139: let PRIVATE_KEY = '';
-140: 
-141: if (!rawKey.includes('-----BEGIN PRIVATE KEY-----')) {
-142:     // If it doesn't contain the PEM header, it MUST be our Base64 string!
-143:     // This cleans up any hidden wrapping quotes, spaces, or server-side artifacts
-144:     let cleanB64 = rawKey.replace(/[^a-zA-Z0-9+/=]/g, '');
-145:     PRIVATE_KEY = Buffer.from(cleanB64, 'base64').toString('utf8');
-146: } else {
-147:     // It is the plain text key (flattened or quoted)
-148:     PRIVATE_KEY = rawKey.replace(/\\n/g, '\n').replace(/"/g, '').trim();
-149: }
+// Ultimate Key Reconstructor: Force-normalizes the key structure regardless of input format
+let rawKey = process.env.GOOGLE_PRIVATE_KEY || '';
+
+// 1. Strip headers, footers, literal escapes, quotes, and all formatting characters
+let cleanBody = rawKey
+    .replace('-----BEGIN PRIVATE KEY-----', '')
+    .replace('-----END PRIVATE KEY-----', '')
+    .replace(/\\n/g, '')
+    .replace(/\\r/g, '')
+    .replace(/[^a-zA-Z0-9+/=]/g, ''); // Leaves ONLY pure Base64 key characters
+
+// 2. Break the Base64 payload into perfect 64-character chunks
+const chunks = cleanBody.match(/.{1,64}/g) || [];
+
+// 3. Wrap it cleanly with standard PEM headers and strict newlines
+const PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----\n${chunks.join('\n')}\n-----END PRIVATE KEY-----\n`;
 
 const serviceAccountAuth = new JWT({
     email: CLIENT_EMAIL,
