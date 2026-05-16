@@ -152,8 +152,6 @@ const serviceAccountAuth = new JWT({
     scopes: [
         'https://www.googleapis.com/auth/spreadsheets',
     ],
-});        'https://www.googleapis.com/auth/spreadsheets',
-    ],
 });
 export async function GET(request: Request) {
     try {
