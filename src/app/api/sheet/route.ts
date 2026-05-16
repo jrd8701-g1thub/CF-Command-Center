@@ -153,6 +153,14 @@ const serviceAccountAuth = new JWT({
         'https://www.googleapis.com/auth/spreadsheets',
     ],
 });
+
+const serviceAccountAuth = new JWT({
+    email: CLIENT_EMAIL,
+    key: PRIVATE_KEY,
+    scopes: [
+        'https://www.googleapis.com/auth/spreadsheets',
+    ],
+});
 export async function GET(request: Request) {
     try {
         const doc = new GoogleSpreadsheet(SHEET_ID, serviceAccountAuth);
