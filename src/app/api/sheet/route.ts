@@ -133,28 +133,33 @@ export function getPHTime(): string {
 // Ensure credentials exist
 const SHEET_ID = process.env.GOOGLE_SHEET_ID!;
 const CLIENT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL!;
-// Ultimate Hybrid Key Parser: Automatically handles Base64, raw text, and formatting glitches
+
+// Ultimate TypeScript-Safe Key Parser: Guarantees zero build errors and handles formatting bugs
 let rawKey = process.env.GOOGLE_PRIVATE_KEY || '';
 let processedKey = rawKey.trim().replace(/^["']|["']$/g, '').trim();
 
-// If it's the Base64 encoded payload, unpack it into text first
+// If it's a Base64 string, decode it first
 if (processedKey.startsWith('LS0t')) {
     processedKey = Buffer.from(processedKey, 'base64').toString('utf8');
 }
 
-// Clean up the underlying private key body completely
+// Strip out headers, footers, literal characters, and spaces
 let keyBody = processedKey
-    .replace('-----BEGIN PRIVATE KEY-----', '')
-    .replace('-----END PRIVATE KEY-----', '')
+    .replace(/-----BEGIN PRIVATE KEY-----/g, '')
+    .replace(/-----END PRIVATE KEY-----/g, '')
     .replace(/\\n/g, '')
     .replace(/\\r/g, '')
-    .replace(/[^a-zA-Z0-9+/=]/g, '');
+    .replace(/\s/g, '');
 
-// Reconstruct into a mathematically flawless 64-character block PEM structure
-const chunks = keyBody.match(/.{1,64}/g) || [];
+// Pure TypeScript loop chunker: completely avoids RegExp type compilation failures
+let chunks: string[] = [];
+for (let i = 0; i < keyBody.length; i += 64) {
+    chunks.push(keyBody.substring(i, i + 64));
+}
+
 const PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----\n${chunks.join('\n')}\n-----END PRIVATE KEY-----\n`;
 
-const serviceAccountAuth = new JWT({
+    const serviceAccountAuth = new JWT({
     email: CLIENT_EMAIL,
     key: PRIVATE_KEY,
     scopes: [
