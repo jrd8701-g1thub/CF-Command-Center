@@ -152,13 +152,7 @@ const serviceAccountAuth = new JWT({
     scopes: [
         'https://www.googleapis.com/auth/spreadsheets',
     ],
-});
-
-const serviceAccountAuth = new JWT({
-    email: CLIENT_EMAIL,
-    key: PRIVATE_KEY,
-    scopes: [
-        'https://www.googleapis.com/auth/spreadsheets',
+});        'https://www.googleapis.com/auth/spreadsheets',
     ],
 });
 export async function GET(request: Request) {
