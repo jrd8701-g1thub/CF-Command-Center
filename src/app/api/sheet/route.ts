@@ -133,22 +133,25 @@ export function getPHTime(): string {
 // Ensure credentials exist
 const SHEET_ID = process.env.GOOGLE_SHEET_ID!;
 const CLIENT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL!;
-
-// Ultimate Key Reconstructor: Force-normalizes the key structure regardless of input format
+// Ultimate Hybrid Key Parser: Automatically handles Base64, raw text, and formatting glitches
 let rawKey = process.env.GOOGLE_PRIVATE_KEY || '';
+let processedKey = rawKey.trim().replace(/^["']|["']$/g, '').trim();
 
-// 1. Strip headers, footers, literal escapes, quotes, and all formatting characters
-let cleanBody = rawKey
+// If it's the Base64 encoded payload, unpack it into text first
+if (processedKey.startsWith('LS0t')) {
+    processedKey = Buffer.from(processedKey, 'base64').toString('utf8');
+}
+
+// Clean up the underlying private key body completely
+let keyBody = processedKey
     .replace('-----BEGIN PRIVATE KEY-----', '')
     .replace('-----END PRIVATE KEY-----', '')
     .replace(/\\n/g, '')
     .replace(/\\r/g, '')
-    .replace(/[^a-zA-Z0-9+/=]/g, ''); // Leaves ONLY pure Base64 key characters
+    .replace(/[^a-zA-Z0-9+/=]/g, '');
 
-// 2. Break the Base64 payload into perfect 64-character chunks
-const chunks = cleanBody.match(/.{1,64}/g) || [];
-
-// 3. Wrap it cleanly with standard PEM headers and strict newlines
+// Reconstruct into a mathematically flawless 64-character block PEM structure
+const chunks = keyBody.match(/.{1,64}/g) || [];
 const PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----\n${chunks.join('\n')}\n-----END PRIVATE KEY-----\n`;
 
 const serviceAccountAuth = new JWT({
