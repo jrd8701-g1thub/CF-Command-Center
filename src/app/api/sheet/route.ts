@@ -130,35 +130,11 @@ export function getPHTime(): string {
     const now = new Date();
     return new Date(now.getTime() + 8 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);
 }
-
 // Ensure credentials exist
 const SHEET_ID = process.env.GOOGLE_SHEET_ID!;
 const CLIENT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL!;
-
-// Ultimate TypeScript-Safe Key Parser + Auto-Chuncker
-let rawKey = process.env.GOOGLE_PRIVATE_KEY || '';
-let processedKey = rawKey.trim().replace(/^["']|["']$/g, '').trim();
-
-// Decode Base64 automatically if detected
-if (processedKey.startsWith('LS0t')) {
-    processedKey = Buffer.from(processedKey, 'base64').toString('utf8');
-}
-
-// Clean formatting elements completely
-let keyBody = processedKey
-    .replace(/-----BEGIN PRIVATE KEY-----/g, '')
-    .replace(/-----END PRIVATE KEY-----/g, '')
-    .replace(/\\n/g, '')
-    .replace(/\\r/g, '')
-    .replace(/\s/g, '');
-
-// Process into block pieces to conform with OpenSSL type specifications
-let chunks: string[] = [];
-for (let i = 0; i < keyBody.length; i += 64) {
-    chunks.push(keyBody.substring(i, i + 64));
-}
-
-const PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----\n${chunks.join('\n')}\n-----END PRIVATE KEY-----\n`;
+// Private key needs to have literal '\n' replaced if it comes as a single line string from env
+const PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n')!;
 
 const serviceAccountAuth = new JWT({
     email: CLIENT_EMAIL,
@@ -167,6 +143,7 @@ const serviceAccountAuth = new JWT({
         'https://www.googleapis.com/auth/spreadsheets',
     ],
 });
+
 export async function GET(request: Request) {
     try {
         const doc = new GoogleSpreadsheet(SHEET_ID, serviceAccountAuth);
@@ -286,8 +263,7 @@ export async function GET(request: Request) {
                 // Try multiple possible header names for the staff name column
                 const name = row.get('Staff') || row.get('Name') || row.get('staff') || row.get('name');
                 if (!name || !name.toString().trim()) continue;
-              // Force reading from Column G (index 6) to bypass header name mismatch issues
-const pin = row.get('PIN') || row.get('Pin') || row.get('pin') || row.get('Password') || row._rawData[6] || '';
+                const pin = row.get('PIN') || row.get('Pin') || row.get('pin') || row.get('Password') || '';
                 const role = row.get('Role') || row.get('Position') || row.get('role') || '';
                 const salary = row.get('Salary') || row.get('Base Pay') || row.get('salary') || row.get('Hourly') || '0';
                 console.log(`[API] Staff: name="${name}", pin="${pin}" (${typeof pin})`);
