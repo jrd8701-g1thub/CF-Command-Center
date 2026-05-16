@@ -134,7 +134,9 @@ export function getPHTime(): string {
 const SHEET_ID = process.env.GOOGLE_SHEET_ID!;
 const CLIENT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL!;
 // Private key needs to have literal '\n' replaced if it comes as a single line string from env
-const PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n')!;
+const PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY_BASE64 
+  ? Buffer.from(process.env.GOOGLE_PRIVATE_KEY_BASE64, 'base64').toString('utf8')
+  : process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n');
 
 const serviceAccountAuth = new JWT({
     email: CLIENT_EMAIL,
