@@ -130,20 +130,21 @@ export function getPHTime(): string {
     const now = new Date();
     return new Date(now.getTime() + 8 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);
 }
+
 // Ensure credentials exist
 const SHEET_ID = process.env.GOOGLE_SHEET_ID!;
 const CLIENT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL!;
 
-// Ultimate TypeScript-Safe Key Parser: Guarantees zero build errors and handles formatting bugs
+// Ultimate TypeScript-Safe Key Parser + Auto-Chuncker
 let rawKey = process.env.GOOGLE_PRIVATE_KEY || '';
 let processedKey = rawKey.trim().replace(/^["']|["']$/g, '').trim();
 
-// If it's a Base64 string, decode it first
+// Decode Base64 automatically if detected
 if (processedKey.startsWith('LS0t')) {
     processedKey = Buffer.from(processedKey, 'base64').toString('utf8');
 }
 
-// Strip out headers, footers, literal characters, and spaces
+// Clean formatting elements completely
 let keyBody = processedKey
     .replace(/-----BEGIN PRIVATE KEY-----/g, '')
     .replace(/-----END PRIVATE KEY-----/g, '')
@@ -151,7 +152,7 @@ let keyBody = processedKey
     .replace(/\\r/g, '')
     .replace(/\s/g, '');
 
-// Pure TypeScript loop chunker: completely avoids RegExp type compilation failures
+// Process into block pieces to conform with OpenSSL type specifications
 let chunks: string[] = [];
 for (let i = 0; i < keyBody.length; i += 64) {
     chunks.push(keyBody.substring(i, i + 64));
@@ -159,7 +160,7 @@ for (let i = 0; i < keyBody.length; i += 64) {
 
 const PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----\n${chunks.join('\n')}\n-----END PRIVATE KEY-----\n`;
 
-    const serviceAccountAuth = new JWT({
+const serviceAccountAuth = new JWT({
     email: CLIENT_EMAIL,
     key: PRIVATE_KEY,
     scopes: [
